@@ -2,7 +2,7 @@ import json
 import threading
 import time
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, request
 
 from drone_sim import DroneSim
 
@@ -32,7 +32,7 @@ threading.Thread(target=_sim_loop, daemon=True).start()
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return app.send_static_file("index.html")
 
 
 @app.route("/stream")
