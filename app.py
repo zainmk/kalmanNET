@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 
@@ -87,5 +88,6 @@ def reset_sim():
 
 
 if __name__ == "__main__":
-    print("Starting KalmanNET drone demo at http://localhost:5000")
-    app.run(debug=False, threaded=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Starting KalmanNET drone demo at http://localhost:{port}")
+    app.run(debug=False, threaded=True, port=port)
