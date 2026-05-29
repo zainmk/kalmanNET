@@ -65,6 +65,18 @@ def toggle():
     return jsonify({"failed": failed})
 
 
+@app.route("/environment", methods=["POST"])
+def environment():
+    data = request.json or {}
+    with sim_lock:
+        sim.set_environment(
+            wind_speed   = float(data.get("wind_speed",   0)),
+            wind_heading = float(data.get("wind_heading", 0)),
+            temperature  = float(data.get("temperature",  20)),
+        )
+    return jsonify({"ok": True})
+
+
 @app.route("/reset", methods=["POST"])
 def reset_sim():
     with sim_lock:

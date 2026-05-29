@@ -9,7 +9,7 @@
 
 <header>
   <h1>KalmanNET // Drone Sensor Redundancy</h1>
-  <span class="badge" data-tooltip="A recursive algorithm that fuses noisy sensor readings into an optimal state estimate. Each cycle it (1) predicts the next state via a constant-velocity motion model, then (2) corrects that prediction using live sensor data weighted by each sensor&#39;s known noise covariance R.">LINEAR KALMAN FILTER</span>
+  <span class="badge" id="badge-kf" data-tooltip="">LINEAR KALMAN FILTER</span>
   <span class="badge" data-tooltip="The drone&#39;s true programmed path: a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. Using an analytic ground truth lets us measure exactly how much error the filter accumulates at every timestep.">HELIX TRAJECTORY</span>
   <span id="badge-status">ALL SENSORS NOMINAL</span>
 </header>
@@ -21,30 +21,59 @@
 
     <!-- Sensor toggles -->
     <div class="panel">
-      <div class="panel-title">Sensor Control</div>
+      <div class="panel-title" data-tooltip="No single sensor is sufficient. GPS drifts without velocity context. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. Together, fused by the Kalman filter, they form a complete and robust estimate. Hover each sensor button for the specific math.">Sensor Control</div>
 
       <button class="sensor-btn active" id="btn-gps" onclick="toggleSensor('gps')"
-        data-tooltip="Global Positioning System — measures absolute 3D position [x, y, z] with noise sigma = 2 m. The yellow dot shows each raw fix. Drift-free but noisy; the primary long-term anchor for the filter. Click to simulate a GPS failure.">
+        data-tooltip="">
         <span><span class="sensor-name">GPS</span><span class="sensor-desc">pos [x,y,z] ±2 m</span></span>
         <span class="indicator"></span>
       </button>
       <button class="sensor-btn active" id="btn-imu" onclick="toggleSensor('imu')"
-        data-tooltip="Inertial Measurement Unit — measures velocity [vx, vy, vz] with noise sigma = 0.5 m/s. The orange arrow shows the current velocity direction and magnitude. Fast and continuous, but without position corrections it accumulates drift over time. Click to simulate failure.">
+        data-tooltip="">
         <span><span class="sensor-name">IMU</span><span class="sensor-desc">vel [vx,vy,vz] ±0.5 m/s</span></span>
         <span class="indicator"></span>
       </button>
       <button class="sensor-btn active" id="btn-baro" onclick="toggleSensor('baro')"
-        data-tooltip="Barometer — measures altitude (z-axis only) with noise sigma = 0.5 m. A cheap, single-axis sensor that constrains vertical drift. The pink ring visualises the measured altitude plane. Click to simulate failure.">
+        data-tooltip="">
         <span><span class="sensor-name">BARO</span><span class="sensor-desc">altitude [z] ±0.5 m</span></span>
         <span class="indicator"></span>
       </button>
       <button class="sensor-btn active" id="btn-mag" onclick="toggleSensor('mag')"
-        data-tooltip="Magnetometer — estimates horizontal position [x, y] via magnetic field heading with noise sigma = 3 m. Provides a coarse XY fix independent of GPS. The purple dot shows each raw reading. Susceptible to electromagnetic interference. Click to simulate failure.">
+        data-tooltip="">
         <span><span class="sensor-name">MAG</span><span class="sensor-desc">heading [x,y] ±3 m</span></span>
         <span class="indicator"></span>
       </button>
 
       <button class="reset-btn" onclick="resetSim()">↺ &nbsp;RESET SIMULATION</button>
+    </div>
+
+    <!-- Environment -->
+    <div class="panel" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">
+      <div class="panel-title">Environment</div>
+
+      <div class="env-row">
+        <div class="env-label-row">
+          <span class="env-label" data-tooltip="Physically deflects the true trajectory (green line). Also raises GPS noise via multipath and turbulence (actual σ = 2 + 0.12·w m) and IMU noise via vibration (actual σ = 0.5 + 0.04·w m/s). Kalman filter always assumes calm-condition R — it does not know wind has increased.">Wind Speed</span>
+          <span class="env-val" id="env-wind-speed-val">0 m/s</span>
+        </div>
+        <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
+      </div>
+
+      <div class="env-row">
+        <div class="env-label-row">
+          <span class="env-label" data-tooltip="Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed &gt; 0. The drone&#39;s autopilot partially counteracts the push — the true path bows rather than drifts without bound.">Wind Heading</span>
+          <span class="env-val" id="env-wind-heading-val">0°</span>
+        </div>
+        <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
+      </div>
+
+      <div class="env-row">
+        <div class="env-label-row">
+          <span class="env-label" data-tooltip="Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.">Temperature</span>
+          <span class="env-val" id="env-temp-val">20°C</span>
+        </div>
+        <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
+      </div>
     </div>
 
     <!-- Sensor readings -->

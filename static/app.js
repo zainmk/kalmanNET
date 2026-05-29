@@ -312,6 +312,29 @@ function applyState(s) {
   controls.target.y += (ey - 8 - controls.target.y) * 0.008;
 }
 
+// ── Environment controls ──────────────────────────────────────────────────────
+function onEnvChange() {
+  const speed   = +document.getElementById('env-wind-speed').value;
+  const heading = +document.getElementById('env-wind-heading').value;
+  const temp    = +document.getElementById('env-temp').value;
+
+  document.getElementById('env-wind-speed-val').textContent  = speed.toFixed(1) + ' m/s';
+  document.getElementById('env-wind-heading-val').textContent = heading + '°';
+  const dT = temp - 20;
+  document.getElementById('env-temp-val').textContent =
+    temp + '°C' + (dT !== 0 ? ' (' + (dT > 0 ? '+' : '') + dT + ')' : '');
+
+  fetch('/environment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      wind_speed:   speed,
+      wind_heading: heading * Math.PI / 180,
+      temperature:  temp,
+    }),
+  });
+}
+
 // ── SSE connection ────────────────────────────────────────────────────────────
 function connectSSE() {
   const es = new EventSource('/stream');
@@ -350,9 +373,86 @@ function positionTooltip(e) {
   tooltipEl.style.top  = y + 'px';
 }
 
+// Rich HTML content for tooltips that need formatting or math notation.
+// Keyed by element id; applied below so the HTML stays clean.
+const TOOLTIP_RICH = {
+  'badge-kf': `
+    <b>Linear Kalman Filter — predict → update</b><br><br>
+    <b>Predict</b> (every timestep, no sensors needed):<br>
+    &nbsp;x̂ ← F·x̂ &nbsp;&nbsp; propagate state via constant-velocity model<br>
+    &nbsp;P ← F·P·Fᵀ + Q &nbsp;&nbsp; uncertainty grows with time<br><br>
+    <b>Update</b> (once per active sensor per step):<br>
+    &nbsp;ε = z − H·x̂ &nbsp;&nbsp; innovation: what sensor saw vs filter predicted<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp;&nbsp; Kalman gain<br>
+    &nbsp;x̂ ← x̂ + K·ε &nbsp;&nbsp; correct the state<br>
+    &nbsp;P ← (I − K·H)·P &nbsp;&nbsp; reduce uncertainty<br><br>
+    R is per-sensor noise covariance. Noisier sensor → larger R → smaller K → smaller correction to the state.`,
+
+  'btn-gps': `
+    <b>GPS — absolute position [x, y, z]</b><br><br>
+    <b>Role:</b> The only drift-free absolute 3D fix — the filter's primary position anchor. Without it, horizontal position falls back to the far noisier magnetometer.<br><br>
+    <b>Its gap, filled by others:</b> Each fix scatters ±2 m. IMU velocity bridges between fixes so the estimate doesn't jump. Barometer independently validates the altitude component.<br><br>
+    <b>Kalman update:</b><br>
+    &nbsp;H = [I₃ | 0₃] &nbsp; selects position rows of the 6-D state<br>
+    &nbsp;ε = z − H·x̂ &nbsp; 3×1 innovation<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp; 6×3 gain matrix<br>
+    &nbsp;x̂ ← x̂ + K·ε &nbsp; all 6 states corrected via cross-covariance in P<br><br>
+    <b>Calm-condition assumptions (fixed — never updated):</b><br>
+    &nbsp;σ = 2.0 m &nbsp;|&nbsp; R = diag(4, 4, 4)<br>
+    Under wind 15 m/s: actual σ ≈ 3.8 m — filter still uses R = 4.<br>
+    This mismatch causes the gain K to be too small; sensor is over-trusted.`,
+
+  'btn-imu': `
+    <b>IMU — velocity [vx, vy, vz]</b><br><br>
+    <b>Role:</b> Fast, continuous updates every step. Bridges the gaps between slow GPS fixes so position doesn't drift in between.<br><br>
+    <b>Its gap, filled by others:</b> Measures velocity not position. Velocity errors integrate into unbounded position error over time. GPS corrects the accumulated drift. Without GPS, position grows unconstrained.<br><br>
+    <b>Kalman update:</b><br>
+    &nbsp;H = [0₃ | I₃] &nbsp; selects velocity rows of the 6-D state<br>
+    &nbsp;ε = z − H·x̂ &nbsp; 3×1 innovation<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp; 6×3 gain<br>
+    &nbsp;x̂ ← x̂ + K·ε &nbsp; position states also shift via off-diagonal terms in P<br><br>
+    <b>Calm-condition assumptions (fixed — never updated):</b><br>
+    &nbsp;σ = 0.5 m/s &nbsp;|&nbsp; R = diag(0.25, 0.25, 0.25)<br>
+    Wind 15 m/s: actual σ ≈ 1.1 m/s. Temp ±30°C: actual σ ≈ 0.74 m/s.<br>
+    KalmanNET would detect the growing innovations and raise its effective gain.`,
+
+  'btn-baro': `
+    <b>Barometer — altitude [z only]</b><br><br>
+    <b>Role:</b> Cheapest sensor, single axis, highly reliable. Anchors altitude independently of GPS — even when GPS fails, BARO + IMU together keep vertical estimates tight.<br><br>
+    <b>Its gap, filled by others:</b> Zero XY awareness. Contributes nothing to horizontal position, which depends entirely on GPS and magnetometer.<br><br>
+    <b>Kalman update:</b><br>
+    &nbsp;H = [0, 0, 1, 0, 0, 0] &nbsp; altitude (z) row only<br>
+    &nbsp;ε = z − H·x̂ &nbsp; scalar innovation<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp; 6×1 gain vector<br>
+    &nbsp;x̂ ← x̂ + K·ε &nbsp; scalar correction propagated to all states via K<br><br>
+    <b>Calm-condition assumptions (fixed — never updated):</b><br>
+    &nbsp;σ = 0.5 m &nbsp;|&nbsp; R = [0.25] &nbsp;|&nbsp; calibrated at 20°C, zero bias<br>
+    At 50°C: actual σ ≈ 0.74 m plus a +3.6 m altitude bias (hot air reads drone as lower).<br>
+    At −10°C: −3.6 m bias (cold air reads drone as higher). Filter sees neither.`,
+
+  'btn-mag': `
+    <b>Magnetometer — horizontal position [x, y]</b><br><br>
+    <b>Role:</b> Independent XY fix that doesn't rely on satellite signal. When GPS fails, MAG is the only sensor preventing horizontal position from going unbounded — even if it does so noisily.<br><br>
+    <b>Its gap, filled by others:</b> Coarsest sensor at ±3 m. High R means the filter assigns it low gain, so GPS overrides its influence when healthy. Barometer covers the altitude axis this sensor ignores.<br><br>
+    <b>Kalman update:</b><br>
+    &nbsp;H = [1,0,0,0,0,0; 0,1,0,0,0,0] &nbsp; x and y position rows<br>
+    &nbsp;ε = z − H·x̂ &nbsp; 2×1 innovation<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp; 6×2 gain<br>
+    &nbsp;x̂ ← x̂ + K·ε &nbsp; gentle correction due to large R<br><br>
+    <b>Calm-condition assumptions (fixed — never updated):</b><br>
+    &nbsp;σ = 3.0 m &nbsp;|&nbsp; R = diag(9, 9)<br>
+    Not significantly affected by wind or temperature in this model — its noise is already large enough that environmental variation is secondary.`,
+};
+
+// Apply rich tooltips by element id, then wire all [data-tooltip] elements.
+Object.entries(TOOLTIP_RICH).forEach(([id, html]) => {
+  const el = document.getElementById(id);
+  if (el) el.dataset.tooltip = html.trim();
+});
+
 document.querySelectorAll('[data-tooltip]').forEach(el => {
   el.addEventListener('mouseenter', e => {
-    tooltipEl.textContent = el.dataset.tooltip;
+    tooltipEl.innerHTML = el.dataset.tooltip;   // innerHTML: our own controlled content
     tooltipEl.classList.add('visible');
     positionTooltip(e);
   });

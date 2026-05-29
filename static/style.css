@@ -192,6 +192,47 @@ header h1 {
   line-height: 1.6;
 }
 
+/* ── Environment panel ── */
+.env-row { margin-bottom: 10px; }
+.env-row:last-child { margin-bottom: 0; }
+.env-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.env-label { font-size: 10px; color: #6688bb; cursor: help; }
+.env-val   { font-size: 10px; color: #99bbff; font-family: 'Courier New', monospace; }
+
+input[type="range"] {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: #111830;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #2255bb;
+  border: 1px solid #4477dd;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { background: #4488ff; }
+input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: #2255bb;
+  border: 1px solid #4477dd;
+  cursor: pointer;
+}
+
 /* ── Sensor readings panel ── */
 .sr-block { margin-bottom: 10px; }
 .sr-block:last-child { margin-bottom: 0; }
@@ -218,7 +259,7 @@ header h1 {
 #tooltip {
   position: fixed;
   z-index: 9999;
-  max-width: 260px;
+  max-width: 320px;
   padding: 8px 11px;
   background: #060d26;
   border: 1px solid #2244aa;
