@@ -24,6 +24,9 @@ class DroneSim:
         self.sensor_failed = {k: False for k in ("gps", "imu", "baro", "mag")}
         self.true_trail = []
         self.est_trail  = []
+        self.raw_trail  = []
+        h0 = self._true_helix(0.0)
+        self.raw_pos = [h0[0], h0[1], h0[2]]
 
         # Environmental state (user-controlled)
         self.wind_speed   = 0.0   # m/s, 0–20
@@ -127,12 +130,27 @@ class DroneSim:
 
         est = self.kf.x.tolist()
 
+        # ── Raw position estimate — direct sensor readings, no filtering ───────
+        # Priority: GPS > MAG (XY), GPS > BARO (Z). Holds last known if nothing available.
+        raw = list(self.raw_pos)
+        if readings['gps']:
+            raw = [readings['gps'][0], readings['gps'][1], readings['gps'][2]]
+        else:
+            if readings['mag']:
+                raw[0] = readings['mag'][0]
+                raw[1] = readings['mag'][1]
+            if readings['baro']:
+                raw[2] = readings['baro'][0]
+        self.raw_pos = raw
+
         # ── Rolling trail buffer (last 150 steps) ─────────────────────────────
         self.true_trail.append(truth[:3].tolist())
         self.est_trail.append(est[:3])
+        self.raw_trail.append(list(raw))
         if len(self.true_trail) > 150:
             self.true_trail.pop(0)
             self.est_trail.pop(0)
+            self.raw_trail.pop(0)
 
         active = sum(1 for v in self.sensor_failed.values() if not v)
 
@@ -142,8 +160,10 @@ class DroneSim:
             "est":         est,
             "readings":    readings,
             "failed":      dict(self.sensor_failed),
+            "raw":         list(self.raw_pos),
             "true_trail":  [list(p) for p in self.true_trail[-80:]],
             "est_trail":   [list(p) for p in self.est_trail[-80:]],
+            "raw_trail":   [list(p) for p in self.raw_trail[-80:]],
             "error":       float(np.linalg.norm(truth[:3] - np.array(est[:3]))),
             "uncertainty": self.kf.position_uncertainty(),
             "active":      active,
@@ -158,7 +178,10 @@ class DroneSim:
         self.t = 0.0
         self.true_trail.clear()
         self.est_trail.clear()
+        self.raw_trail.clear()
         for k in self.sensor_failed:
             self.sensor_failed[k] = False
-        self.wind_disp = [0.0, 0.0]   # clear drift; keep user's env settings
+        self.wind_disp = [0.0, 0.0]
+        h0 = self._true_helix(0.0)
+        self.raw_pos = [h0[0], h0[1], h0[2]]
         self._init_kf()

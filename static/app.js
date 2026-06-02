@@ -127,6 +127,7 @@ function makeTrailLine(color) {
 
 const trueTrail = makeTrailLine(0x00ff44);
 const estTrail  = makeTrailLine(0x00aaff);
+const rawTrail  = makeTrailLine(0xff3300);
 
 function updateTrail(line, trail) {
   const attr = line.geometry.attributes.position;
@@ -238,6 +239,7 @@ function applyState(s) {
 
   updateTrail(trueTrail, s.true_trail);
   updateTrail(estTrail,  s.est_trail);
+  updateTrail(rawTrail,  s.raw_trail);
 
   const r = s.readings;
   if (r.gps) {
@@ -313,6 +315,14 @@ function applyState(s) {
 }
 
 // ── Environment controls ──────────────────────────────────────────────────────
+function resetEnv() {
+  document.getElementById('env-wind-speed').value   = 0;
+  document.getElementById('env-wind-heading').value = 0;
+  document.getElementById('env-temp').value         = 20;
+  onEnvChange();
+}
+window.resetEnv = resetEnv;
+
 function onEnvChange() {
   const speed   = +document.getElementById('env-wind-speed').value;
   const heading = +document.getElementById('env-wind-heading').value;
@@ -353,6 +363,7 @@ async function resetSim() {
   errHistory.length = 0;
   trueTrail.geometry.setDrawRange(0, 0);
   estTrail.geometry.setDrawRange(0, 0);
+  rawTrail.geometry.setDrawRange(0, 0);
   camera.position.set(60, 38, 60);
   controls.target.set(0, 8, 0);
   controls.update();

@@ -18,15 +18,21 @@
   <canvas id="canvas"></canvas>
 
   <!-- Environment overlay — positioned over the canvas -->
-  <div class="env-overlay" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">
-    <div class="panel-title">Environment</div>
+  <div class="env-overlay">
+    <div class="env-header">
+      <span class="panel-title" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">Environment</span>
+      <button class="env-reset-btn" onclick="resetEnv()" data-tooltip="Reset to Kalman calibration defaults: 0 m/s wind, 0° heading, 20°C. These are the exact conditions the filter&#39;s R matrices were tuned for — where it performs optimally.">↺</button>
+    </div>
 
     <div class="env-row">
       <div class="env-label-row">
         <span class="env-label" data-tooltip="Physically deflects the true trajectory (green line). Also raises GPS noise via multipath and turbulence (actual σ = 2 + 0.12·w m) and IMU noise via vibration (actual σ = 0.5 + 0.04·w m/s). Kalman filter always assumes calm-condition R — it does not know wind has increased.">Wind Speed</span>
         <span class="env-val" id="env-wind-speed-val">0 m/s</span>
       </div>
-      <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
+      <div class="slider-wrap">
+        <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:calc(5.5px)" title="Default: 0 m/s"></div>
+      </div>
     </div>
 
     <div class="env-row">
@@ -34,7 +40,10 @@
         <span class="env-label" data-tooltip="Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed &gt; 0. The drone&#39;s autopilot partially counteracts the push — the true path bows rather than drifts without bound.">Wind Heading</span>
         <span class="env-val" id="env-wind-heading-val">0°</span>
       </div>
-      <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
+      <div class="slider-wrap">
+        <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:calc(5.5px)" title="Default: 0°"></div>
+      </div>
     </div>
 
     <div class="env-row">
@@ -42,7 +51,10 @@
         <span class="env-label" data-tooltip="Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.">Temperature</span>
         <span class="env-val" id="env-temp-val">20°C</span>
       </div>
-      <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
+      <div class="slider-wrap">
+        <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:50%" title="Default: 20°C"></div>
+      </div>
     </div>
   </div>
 
@@ -125,44 +137,24 @@
       <canvas id="err-chart"></canvas>
     </div>
 
-    <!-- Legend -->
-    <div class="panel">
-      <div class="panel-title">Legend</div>
-      <div class="legend-row" data-tooltip="The analytically computed ground-truth helix. In real flight this is unknown &#8212; shown here only to benchmark the filter&#39;s accuracy.">
-        <div class="leg-line" style="background:#00ff44"></div>True trajectory
-      </div>
-      <div class="legend-row" data-tooltip="The Kalman filter&#39;s fused position estimate drawn as a trail. Compare its path to the green truth line to see where the filter lags or deviates.">
-        <div class="leg-line" style="background:#00aaff"></div>Kalman estimate
-      </div>
-      <div class="legend-row" data-tooltip="The semi-transparent green wireframe shows the drone&#39;s true position. The gap between this ghost and the white drone is the current position error.">
-        <div class="leg-dot" style="background:#00ff44"></div>True drone position
-      </div>
-      <div class="legend-row" data-tooltip="The white drone mesh shows the Kalman filter&#39;s current best estimate of position. Its rotors spin at the estimated angular rate.">
-        <div class="leg-dot" style="background:#ffffff"></div>Estimated drone
-      </div>
-      <div class="legend-row" data-tooltip="Each yellow dot is a raw GPS fix. Notice the scatter around the true path &#8212; that spread represents the &#177;2 m sensor noise the filter must average out.">
-        <div class="leg-dot" style="background:#ffdd00"></div>GPS reading
-      </div>
-      <div class="legend-row" data-tooltip="The orange arrow shows the IMU&#39;s measured velocity vector. Arrow direction is heading; length scales with speed. Disappears when the IMU is failed.">
-        <div class="leg-dot" style="background:#ff8800"></div>IMU velocity arrow
-      </div>
-      <div class="legend-row" data-tooltip="The pink dot and horizontal ring mark the barometer&#39;s measured altitude plane. The ring stays flat &#8212; barometers have no XY awareness.">
-        <div class="leg-dot" style="background:#ff44aa"></div>Barometer alt.
-      </div>
-      <div class="legend-row" data-tooltip="The purple dot shows the magnetometer&#39;s raw XY position reading. It is noisier than GPS (&#177;3 m) &#8212; notice the wider scatter around the true path.">
-        <div class="leg-dot" style="background:#bb44ff"></div>Magnetometer XY
-      </div>
-      <div class="legend-row" data-tooltip="The translucent blue sphere around the estimated drone represents 1&#963; position uncertainty from the filter&#39;s covariance matrix P. Watch it inflate as sensors fail and shrink when they recover.">
-        <div class="leg-dot" style="background:#0055ff; opacity:0.4"></div>Uncertainty sphere
-      </div>
-      <div class="legend-note">
-        Click a sensor button to fail it mid-flight.<br>
-        The Kalman filter fuses remaining sensors<br>
-        and dead-reckons when all are lost.
-      </div>
-    </div>
-
   </div><!-- sidebar -->
+
+  <!-- Legend — centered pill at bottom of canvas -->
+  <div class="bottom-legend">
+    <div class="bottom-legend-inner">
+      <div class="overlay-legend-row" data-tooltip="The analytically computed ground-truth helix. In real flight this is unknown &#8212; shown here only to benchmark the filter&#39;s accuracy."><div class="leg-line" style="background:#00ff44"></div>True</div>
+      <div class="overlay-legend-row" data-tooltip="Raw sensor position — direct readings with no filtering. GPS x/y/z when available, falling back to magnetometer (XY) and barometer (Z). Shows exactly how noisy unfiltered sensing is."><div class="leg-line" style="background:#ff3300"></div>Raw</div>
+      <div class="overlay-legend-row" data-tooltip="The Kalman filter&#39;s fused position estimate drawn as a trail. Compare its path to the green truth line to see where the filter lags or deviates."><div class="leg-line" style="background:#00aaff"></div>Kalman</div>
+      <div class="overlay-legend-row" data-tooltip="The semi-transparent green wireframe shows the drone&#39;s true position. The gap between this and the white drone is the current position error."><div class="leg-dot" style="background:#00ff44"></div>True drone</div>
+      <div class="overlay-legend-row" data-tooltip="The white drone mesh shows the Kalman filter&#39;s current best estimate of position."><div class="leg-dot" style="background:#ffffff"></div>Est. drone</div>
+      <div class="overlay-legend-row" data-tooltip="Each yellow dot is a raw GPS fix. The scatter represents &#177;2 m sensor noise the filter must average out."><div class="leg-dot" style="background:#ffdd00"></div>GPS</div>
+      <div class="overlay-legend-row" data-tooltip="The orange arrow shows the IMU&#39;s measured velocity vector. Direction is heading; length scales with speed."><div class="leg-dot" style="background:#ff8800"></div>IMU</div>
+      <div class="overlay-legend-row" data-tooltip="The pink dot and horizontal ring mark the barometer&#39;s measured altitude plane. The ring stays flat &#8212; barometers have no XY awareness."><div class="leg-dot" style="background:#ff44aa"></div>Baro</div>
+      <div class="overlay-legend-row" data-tooltip="The purple dot shows the magnetometer&#39;s raw XY position reading. It is noisier than GPS (&#177;3 m) &#8212; notice the wider scatter."><div class="leg-dot" style="background:#bb44ff"></div>Mag</div>
+      <div class="overlay-legend-row" data-tooltip="The translucent blue sphere represents 1&#963; position uncertainty from the covariance matrix P. Inflates as sensors fail; shrinks when they recover."><div class="leg-dot" style="background:#0055ff; opacity:0.5"></div>Unc.</div>
+    </div>
+  </div>
+
 </div><!-- main -->
 
 <div id="tooltip"></div>

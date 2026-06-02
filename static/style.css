@@ -69,12 +69,45 @@ header h1 {
   z-index: 10;
   backdrop-filter: blur(6px);
 }
+.env-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
 .env-overlay .panel-title {
   font-size: 9px;
   letter-spacing: 2.5px;
   color: #5577cc;
-  margin-bottom: 10px;
   text-transform: uppercase;
+  margin-bottom: 0;
+}
+.env-reset-btn {
+  background: none;
+  border: 1px solid #1e2860;
+  color: #4466cc;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 1px 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: border-color 0.15s, color 0.15s;
+}
+.env-reset-btn:hover { border-color: #4477dd; color: #88aaff; }
+
+.slider-wrap {
+  position: relative;
+  padding-bottom: 8px;
+}
+.slider-tick {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 5px;
+  background: #3355bb;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  pointer-events: none;
 }
 
 #canvas {
@@ -296,3 +329,35 @@ input[type="range"]::-moz-range-thumb {
 }
 #tooltip.visible { opacity: 1; }
 [data-tooltip] { cursor: help; }
+
+/* ── Bottom legend ── */
+.bottom-legend {
+  position: absolute;
+  bottom: 14px;
+  left: 0;
+  right: 280px;
+  display: flex;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+}
+.bottom-legend-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 16px;
+  background: rgba(6, 8, 28, 0.80);
+  border: 1px solid #151e50;
+  border-radius: 20px;
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+.overlay-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: #6688aa;
+  cursor: help;
+  white-space: nowrap;
+}
