@@ -7,20 +7,18 @@ const TOOLTIPS = {
   'badge-helix': `The drone's true programmed path is a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. This serves as the analytic ground truth and lets us compare error accumulation in the filter at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
 
   'badge-kf': `<b>Purpose</b><br>
-    Optimally fuses multiple noisy sensors into a single state estimate — the minimum-variance solution to "what is the drone's true position given all these imperfect readings?" Used in GPS navigation, aerospace, and robotics wherever multiple sensors observe the same underlying state.<br><br>
+    The Linear Kalman Filter is used to optimally fuse the data from multiple noisy sensors into a single estimate — the minimum-variance solution to when multiple sensors are observing the same underlying state and accuracy of data is required.<br><br>
     <b>Predict</b> — advance state using the motion model:<br>
     &nbsp;x̂ ← F·x̂ &nbsp;&nbsp; (where the drone is expected to be)<br>
     &nbsp;P ← F·P·Fᵀ + Q &nbsp;&nbsp; (uncertainty grows without corrections)<br><br>
     <b>Update</b> — correct using each active sensor reading z:<br>
-    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + <b>R</b>)⁻¹ &nbsp;&nbsp; (Kalman gain)<br>
-    &nbsp;x̂ ← x̂ + K·(z − H·x̂) &nbsp;&nbsp; (nudge estimate toward reading)<br><br>
-    <b>R — measurement noise covariance</b><br>
-    Encodes how much the filter trusts each sensor, set once at calibration and never changed. Large R → small K → sensor barely shifts the estimate. Small R → large K → sensor dominates. If real noise exceeds R (e.g. wind raises GPS noise beyond its calibrated value), K is wrong and the estimate degrades — this is precisely the problem KalmanNET solves by learning R implicitly.<br><br>
-    <b>The "Linear" constraint</b><br>
-    The filter is provably optimal only when two assumptions hold:<br>
-    1. <b>Motion model is linear</b> — F is a fixed matrix (constant velocity; no turns or acceleration modelled)<br>
-    2. <b>Sensor models are linear</b> — H is a fixed matrix (each sensor selects a fixed subset of state dimensions)<br>
-    When either breaks — non-linear dynamics, bearing-angle sensors, atmospheric distortion — the filter is only an approximation. Extensions (EKF, UKF) address this analytically; KalmanNET addresses it by replacing the gain formula with a learned function.`,
+    <span style="display:block;margin:6px 0 2px;padding:5px 9px;background:rgba(30,55,130,0.45);border-left:2px solid #4477dd;border-radius:3px;font-family:monospace;color:#aaccff;text-align:center">K = P·Hᵀ·(H·P·Hᵀ + <b style="color:#fff">R</b>)⁻¹ &nbsp;<span style="color:#5577aa;font-size:9px">← Kalman gain</span></span>
+    <span style="display:block;margin:2px 0 6px;padding:5px 9px;background:rgba(30,55,130,0.45);border-left:2px solid #4477dd;border-radius:3px;font-family:monospace;color:#aaccff;text-align:center">x̂ ← x̂ + K·(z − H·x̂) &nbsp;<span style="color:#5577aa;font-size:9px">← state correction</span></span>
+    <b>R — Measurement Noise Covariance</b><br>
+    Encodes how much the kalman filter trusts each sensor. It is set once at calibration but never changed. Large R → sensor barely shifts the estimate. Small R → sensor dominates. Unaccountable environmental noise can lead to an inaccurate 'R' and degrade the estimate - <i> KalmanNET learns from its environment to assign 'R' appropriately, for a more accurate representation<i>.<br><br>
+    <b>Assumptions of Linearity: </b><br>
+    We assume the following two assumptions; the motion model is linear - the drone flies in a constant velocity helix, and the sensor models are linear - each sensor observes a fixed subset of the state. 
+    Extensions of the algorithm (EKF, UKF) exist to address non-linearities analytically - <i> KalmanNET addresses it by replacing this gain formula with a learned network instead </i>.`,
 
 
 
