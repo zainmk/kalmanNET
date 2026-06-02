@@ -53,6 +53,28 @@ header h1 {
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  position: relative;
+}
+
+/* ── Environment overlay ── */
+.env-overlay {
+  position: absolute;
+  top: 16px;
+  right: 296px;
+  width: 200px;
+  background: rgba(6, 8, 28, 0.82);
+  border: 1px solid #1e2860;
+  border-radius: 6px;
+  padding: 10px 12px;
+  z-index: 10;
+  backdrop-filter: blur(6px);
+}
+.env-overlay .panel-title {
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  color: #5577cc;
+  margin-bottom: 10px;
+  text-transform: uppercase;
 }
 
 #canvas {

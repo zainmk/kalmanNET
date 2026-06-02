@@ -17,6 +17,35 @@
 <div class="main">
   <canvas id="canvas"></canvas>
 
+  <!-- Environment overlay — positioned over the canvas -->
+  <div class="env-overlay" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">
+    <div class="panel-title">Environment</div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" data-tooltip="Physically deflects the true trajectory (green line). Also raises GPS noise via multipath and turbulence (actual σ = 2 + 0.12·w m) and IMU noise via vibration (actual σ = 0.5 + 0.04·w m/s). Kalman filter always assumes calm-condition R — it does not know wind has increased.">Wind Speed</span>
+        <span class="env-val" id="env-wind-speed-val">0 m/s</span>
+      </div>
+      <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
+    </div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" data-tooltip="Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed &gt; 0. The drone&#39;s autopilot partially counteracts the push — the true path bows rather than drifts without bound.">Wind Heading</span>
+        <span class="env-val" id="env-wind-heading-val">0°</span>
+      </div>
+      <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
+    </div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" data-tooltip="Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.">Temperature</span>
+        <span class="env-val" id="env-temp-val">20°C</span>
+      </div>
+      <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
+    </div>
+  </div>
+
   <div class="sidebar">
 
     <!-- Sensor toggles -->
@@ -45,35 +74,6 @@
       </button>
 
       <button class="reset-btn" onclick="resetSim()">↺ &nbsp;RESET SIMULATION</button>
-    </div>
-
-    <!-- Environment -->
-    <div class="panel" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">
-      <div class="panel-title">Environment</div>
-
-      <div class="env-row">
-        <div class="env-label-row">
-          <span class="env-label" data-tooltip="Physically deflects the true trajectory (green line). Also raises GPS noise via multipath and turbulence (actual σ = 2 + 0.12·w m) and IMU noise via vibration (actual σ = 0.5 + 0.04·w m/s). Kalman filter always assumes calm-condition R — it does not know wind has increased.">Wind Speed</span>
-          <span class="env-val" id="env-wind-speed-val">0 m/s</span>
-        </div>
-        <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
-      </div>
-
-      <div class="env-row">
-        <div class="env-label-row">
-          <span class="env-label" data-tooltip="Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed &gt; 0. The drone&#39;s autopilot partially counteracts the push — the true path bows rather than drifts without bound.">Wind Heading</span>
-          <span class="env-val" id="env-wind-heading-val">0°</span>
-        </div>
-        <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
-      </div>
-
-      <div class="env-row">
-        <div class="env-label-row">
-          <span class="env-label" data-tooltip="Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.">Temperature</span>
-          <span class="env-val" id="env-temp-val">20°C</span>
-        </div>
-        <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
-      </div>
     </div>
 
     <!-- Sensor readings -->
