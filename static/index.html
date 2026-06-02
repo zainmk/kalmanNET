@@ -9,24 +9,24 @@
 
 <header>
   <h1>KalmanNET // Drone Sensor Redundancy</h1>
-  <span class="badge" id="badge-kf" data-tooltip="">LINEAR KALMAN FILTER</span>
-  <span class="badge" data-tooltip="The drone&#39;s true programmed path: a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. Using an analytic ground truth lets us measure exactly how much error the filter accumulates at every timestep. Assumption: the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude.">HELIX TRAJECTORY</span>
+  <span class="badge" id="badge-helix" data-tooltip="">HELIX TRAJECTORY</span>
+  <span class="badge" id="badge-kf"    data-tooltip="">LINEAR KALMAN FILTER</span>
   <span id="badge-status">ALL SENSORS NOMINAL</span>
 </header>
 
 <div class="main">
   <canvas id="canvas"></canvas>
 
-  <!-- Environment overlay — positioned over the canvas -->
+  <!-- Environment overlay -->
   <div class="env-overlay">
     <div class="env-header">
-      <span class="panel-title" data-tooltip="Environmental conditions that stress the sensor suite beyond the Kalman filter&#39;s calm-condition assumptions. The filter&#39;s R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.">Environment</span>
-      <button class="env-reset-btn" onclick="resetEnv()" data-tooltip="Reset to Kalman calibration defaults: 0 m/s wind, 0° heading, 20°C. These are the exact conditions the filter&#39;s R matrices were tuned for — where it performs optimally.">↺</button>
+      <span class="panel-title" id="env-title" data-tooltip="">Environment</span>
+      <button class="env-reset-btn" id="env-reset-btn" onclick="resetEnv()" data-tooltip="">↺</button>
     </div>
 
     <div class="env-row">
       <div class="env-label-row">
-        <span class="env-label" data-tooltip="Physically deflects the true trajectory (green line). Also raises GPS noise via multipath and turbulence (actual σ = 2 + 0.12·w m) and IMU noise via vibration (actual σ = 0.5 + 0.04·w m/s). Kalman filter always assumes calm-condition R — it does not know wind has increased.">Wind Speed</span>
+        <span class="env-label" id="env-wind-speed-label" data-tooltip="">Wind Speed</span>
         <span class="env-val" id="env-wind-speed-val">0 m/s</span>
       </div>
       <div class="slider-wrap">
@@ -37,7 +37,7 @@
 
     <div class="env-row">
       <div class="env-label-row">
-        <span class="env-label" data-tooltip="Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed &gt; 0. The drone&#39;s autopilot partially counteracts the push — the true path bows rather than drifts without bound.">Wind Heading</span>
+        <span class="env-label" id="env-wind-heading-label" data-tooltip="">Wind Heading</span>
         <span class="env-val" id="env-wind-heading-val">0°</span>
       </div>
       <div class="slider-wrap">
@@ -48,7 +48,7 @@
 
     <div class="env-row">
       <div class="env-label-row">
-        <span class="env-label" data-tooltip="Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.">Temperature</span>
+        <span class="env-label" id="env-temp-label" data-tooltip="">Temperature</span>
         <span class="env-val" id="env-temp-val">20°C</span>
       </div>
       <div class="slider-wrap">
@@ -62,25 +62,21 @@
 
     <!-- Sensor toggles -->
     <div class="panel">
-      <div class="panel-title" data-tooltip="No single sensor is sufficient. GPS drifts without velocity context. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. Together, fused by the Kalman filter, they form a complete and robust estimate. Hover each sensor button for the specific math.">Sensor Control</div>
+      <div class="panel-title" id="panel-sensor-control" data-tooltip="">Sensor Control</div>
 
-      <button class="sensor-btn active" id="btn-gps" onclick="toggleSensor('gps')"
-        data-tooltip="">
+      <button class="sensor-btn active" id="btn-gps"  onclick="toggleSensor('gps')"  data-tooltip="">
         <span><span class="sensor-name">GPS</span><span class="sensor-desc">pos [x,y,z] ±2 m</span></span>
         <span class="indicator"></span>
       </button>
-      <button class="sensor-btn active" id="btn-imu" onclick="toggleSensor('imu')"
-        data-tooltip="">
+      <button class="sensor-btn active" id="btn-imu"  onclick="toggleSensor('imu')"  data-tooltip="">
         <span><span class="sensor-name">IMU</span><span class="sensor-desc">vel [vx,vy,vz] ±0.5 m/s</span></span>
         <span class="indicator"></span>
       </button>
-      <button class="sensor-btn active" id="btn-baro" onclick="toggleSensor('baro')"
-        data-tooltip="">
+      <button class="sensor-btn active" id="btn-baro" onclick="toggleSensor('baro')" data-tooltip="">
         <span><span class="sensor-name">BARO</span><span class="sensor-desc">altitude [z] ±0.5 m</span></span>
         <span class="indicator"></span>
       </button>
-      <button class="sensor-btn active" id="btn-mag" onclick="toggleSensor('mag')"
-        data-tooltip="">
+      <button class="sensor-btn active" id="btn-mag"  onclick="toggleSensor('mag')"  data-tooltip="">
         <span><span class="sensor-name">MAG</span><span class="sensor-desc">heading [x,y] ±3 m</span></span>
         <span class="indicator"></span>
       </button>
@@ -89,7 +85,7 @@
     </div>
 
     <!-- Sensor readings -->
-    <div class="panel" data-tooltip="Raw: the noisy measurement received from the sensor this timestep. KF Est: the Kalman filter&#39;s current best estimate of the same quantity, fused from all active sensors.">
+    <div class="panel" id="panel-sensor-readings" data-tooltip="">
       <div class="panel-title">Sensor Readings</div>
 
       <div class="sr-block">
@@ -128,12 +124,11 @@
           <span class="sr-ax">Y</span><span class="sr-raw" id="sr-mag-y-raw">—</span><span class="sr-kf" id="sr-mag-y-kf">—</span>
         </div>
       </div>
-
     </div>
 
     <!-- Error chart -->
     <div class="panel">
-      <div class="panel-title" data-tooltip="Plots position error over the last 200 timesteps. Colour shifts green &#8594; amber &#8594; red as error grows. Watch it spike when sensors fail and the filter falls back to dead-reckoning.">Position Error over Time</div>
+      <div class="panel-title" id="panel-error-title" data-tooltip="">Position Error over Time</div>
       <canvas id="err-chart"></canvas>
     </div>
 
@@ -142,16 +137,16 @@
   <!-- Legend — centered pill at bottom of canvas -->
   <div class="bottom-legend">
     <div class="bottom-legend-inner">
-      <div class="overlay-legend-row" data-tooltip="The analytically computed ground-truth helix. In real flight this is unknown &#8212; shown here only to benchmark the filter&#39;s accuracy."><div class="leg-line" style="background:#00ff44"></div>True</div>
-      <div class="overlay-legend-row" data-tooltip="Raw sensor position — direct readings with no filtering. GPS x/y/z when available, falling back to magnetometer (XY) and barometer (Z). Shows exactly how noisy unfiltered sensing is."><div class="leg-line" style="background:#ff3300"></div>Raw</div>
-      <div class="overlay-legend-row" data-tooltip="The Kalman filter&#39;s fused position estimate drawn as a trail. Compare its path to the green truth line to see where the filter lags or deviates."><div class="leg-line" style="background:#00aaff"></div>Kalman</div>
-      <div class="overlay-legend-row" data-tooltip="The semi-transparent green wireframe shows the drone&#39;s true position. The gap between this and the white drone is the current position error."><div class="leg-dot" style="background:#00ff44"></div>True drone</div>
-      <div class="overlay-legend-row" data-tooltip="The white drone mesh shows the Kalman filter&#39;s current best estimate of position."><div class="leg-dot" style="background:#ffffff"></div>Est. drone</div>
-      <div class="overlay-legend-row" data-tooltip="Each yellow dot is a raw GPS fix. The scatter represents &#177;2 m sensor noise the filter must average out."><div class="leg-dot" style="background:#ffdd00"></div>GPS</div>
-      <div class="overlay-legend-row" data-tooltip="The orange arrow shows the IMU&#39;s measured velocity vector. Direction is heading; length scales with speed."><div class="leg-dot" style="background:#ff8800"></div>IMU</div>
-      <div class="overlay-legend-row" data-tooltip="The pink dot and horizontal ring mark the barometer&#39;s measured altitude plane. The ring stays flat &#8212; barometers have no XY awareness."><div class="leg-dot" style="background:#ff44aa"></div>Baro</div>
-      <div class="overlay-legend-row" data-tooltip="The purple dot shows the magnetometer&#39;s raw XY position reading. It is noisier than GPS (&#177;3 m) &#8212; notice the wider scatter."><div class="leg-dot" style="background:#bb44ff"></div>Mag</div>
-      <div class="overlay-legend-row" data-tooltip="The translucent blue sphere represents 1&#963; position uncertainty from the covariance matrix P. Inflates as sensors fail; shrinks when they recover."><div class="leg-dot" style="background:#0055ff; opacity:0.5"></div>Unc.</div>
+      <div class="overlay-legend-row" id="legend-true"       data-tooltip=""><div class="leg-line" style="background:#00ff44"></div>True</div>
+      <div class="overlay-legend-row" id="legend-raw"        data-tooltip=""><div class="leg-line" style="background:#ff3300"></div>Raw</div>
+      <div class="overlay-legend-row" id="legend-kalman"     data-tooltip=""><div class="leg-line" style="background:#00aaff"></div>Kalman</div>
+      <div class="overlay-legend-row" id="legend-true-drone" data-tooltip=""><div class="leg-dot"  style="background:#00ff44"></div>True drone</div>
+      <div class="overlay-legend-row" id="legend-est-drone"  data-tooltip=""><div class="leg-dot"  style="background:#ffffff"></div>Est. drone</div>
+      <div class="overlay-legend-row" id="legend-gps"        data-tooltip=""><div class="leg-dot"  style="background:#ffdd00"></div>GPS</div>
+      <div class="overlay-legend-row" id="legend-imu"        data-tooltip=""><div class="leg-dot"  style="background:#ff8800"></div>IMU</div>
+      <div class="overlay-legend-row" id="legend-baro"       data-tooltip=""><div class="leg-dot"  style="background:#ff44aa"></div>Baro</div>
+      <div class="overlay-legend-row" id="legend-mag"        data-tooltip=""><div class="leg-dot"  style="background:#bb44ff"></div>Mag</div>
+      <div class="overlay-legend-row" id="legend-unc"        data-tooltip=""><div class="leg-dot"  style="background:#0055ff; opacity:0.5"></div>Unc.</div>
     </div>
   </div>
 
@@ -161,6 +156,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="/static/tooltips.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
