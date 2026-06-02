@@ -6,13 +6,21 @@ const TOOLTIPS = {
 
   'badge-helix': `The drone's true programmed path is a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. This serves as the analytic ground truth and lets us compare error accumulation in the filter at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
 
-  'badge-kf': `The filter makes a physics-based guess each step, then corrects it toward sensor readings — weighting each sensor by how much it trusts it. That trust is encoded in <b>R</b>, fixed at calibration and never updated.<br><br>
-    <b>Predict:</b> x̂ ← F·x̂ &nbsp;|&nbsp; P ← F·P·Fᵀ + Q<br><br>
-    <b>Update (per sensor):</b><br>
-    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + <b>R</b>)⁻¹<br>
-    &nbsp;x̂ ← x̂ + K·(z − H·x̂)<br><br>
-    R per sensor — GPS: diag(4,4,4) · IMU: diag(0.25,0.25,0.25) · Baro: [0.25] · Mag: diag(9,9)<br><br>
-    K shrinks as R grows. A noisier sensor moves the estimate less. A miscalibrated R moves it by the wrong amount.`,
+  'badge-kf': `<b>Purpose</b><br>
+    Optimally fuses multiple noisy sensors into a single state estimate — the minimum-variance solution to "what is the drone's true position given all these imperfect readings?" Used in GPS navigation, aerospace, and robotics wherever multiple sensors observe the same underlying state.<br><br>
+    <b>Predict</b> — advance state using the motion model:<br>
+    &nbsp;x̂ ← F·x̂ &nbsp;&nbsp; (where the drone is expected to be)<br>
+    &nbsp;P ← F·P·Fᵀ + Q &nbsp;&nbsp; (uncertainty grows without corrections)<br><br>
+    <b>Update</b> — correct using each active sensor reading z:<br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + <b>R</b>)⁻¹ &nbsp;&nbsp; (Kalman gain)<br>
+    &nbsp;x̂ ← x̂ + K·(z − H·x̂) &nbsp;&nbsp; (nudge estimate toward reading)<br><br>
+    <b>R — measurement noise covariance</b><br>
+    Encodes how much the filter trusts each sensor, set once at calibration and never changed. Large R → small K → sensor barely shifts the estimate. Small R → large K → sensor dominates. If real noise exceeds R (e.g. wind raises GPS noise beyond its calibrated value), K is wrong and the estimate degrades — this is precisely the problem KalmanNET solves by learning R implicitly.<br><br>
+    <b>The "Linear" constraint</b><br>
+    The filter is provably optimal only when two assumptions hold:<br>
+    1. <b>Motion model is linear</b> — F is a fixed matrix (constant velocity; no turns or acceleration modelled)<br>
+    2. <b>Sensor models are linear</b> — H is a fixed matrix (each sensor selects a fixed subset of state dimensions)<br>
+    When either breaks — non-linear dynamics, bearing-angle sensors, atmospheric distortion — the filter is only an approximation. Extensions (EKF, UKF) address this analytically; KalmanNET addresses it by replacing the gain formula with a learned function.`,
 
 
 

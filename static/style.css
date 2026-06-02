@@ -34,7 +34,10 @@ header h1 {
   border-radius: 3px;
   background: rgba(20, 30, 80, 0.6);
   letter-spacing: 1px;
+  text-decoration: none;
+  color: inherit;
 }
+a.badge:hover { border-color: #4466cc; color: #aaccff; }
 #badge-status {
   margin-left: auto;
   font-size: 11px;

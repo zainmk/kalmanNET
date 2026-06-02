@@ -99,3 +99,4 @@ Calibration temperature: **20°C**. Baro bias formula: `0.12 × (T − 20)` metr
 #### HIGHLIGHT
 
 - a combination of a multitude of sensors are used together for the kalman filter
+- GRU's are a specific form of RNN, best suited for kalmanNET - due to small size, learning, etc... using an update/reset gate to determine which info. to keep/forget.
