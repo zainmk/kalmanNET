@@ -203,6 +203,32 @@ function drawErrChart() {
   errCtx.beginPath(); errCtx.moveTo(0, h - 0.5); errCtx.lineTo(w, h - 0.5); errCtx.stroke();
 }
 
+// ── Badge tooltip — dynamic based on current sensor failures ─────────────────
+function buildBadgeTooltip(failed) {
+  if (!failed.gps && !failed.imu && !failed.baro && !failed.mag) {
+    return 'All 4 sensors active — filter operating at calibration accuracy. GPS anchors 3D position, IMU bridges velocity between fixes, Baro constrains altitude precisely, Mag provides XY backup. Position error typically &lt; 3 m.';
+  }
+  if (failed.gps && failed.imu && failed.baro && failed.mag) {
+    return 'All sensors offline — pure dead-reckoning. The filter propagates using only its constant-velocity motion model. Uncertainty grows unboundedly. The estimate diverges from truth with no path to recovery until a sensor is restored.';
+  }
+
+  const parts = [];
+
+  if (failed.gps)
+    parts.push('<b>GPS offline</b> — primary position anchor lost. XY now relies solely on magnetometer (σ = 3 m). The filter dead-reckons from IMU velocity with no absolute position correction — error accumulates every step.');
+  if (failed.imu)
+    parts.push('<b>IMU offline</b> — no velocity corrections between GPS fixes. The filter assumes constant velocity but the drone curves, so predictions degrade between fixes. Error shows a sawtooth pattern: spikes between fixes, partial recovery on each GPS update.');
+  if (failed.baro)
+    parts.push('<b>Barometer offline</b> — altitude now constrained only by GPS (σ = 2 m vs baro\'s σ = 0.5 m). XY is unaffected. Altitude estimates become noisier. Most significant when temperature was causing a baro bias the filter was following.');
+  if (failed.mag)
+    parts.push('<b>Magnetometer offline</b> — minimal impact while GPS is active (MAG already has low Kalman gain due to R = diag(9,9)). Critical if GPS also fails: without mag, horizontal position becomes fully unbounded.');
+
+  if (failed.gps && failed.imu)
+    parts.push('<b>⚠ GPS + IMU together</b> — the worst combination. No position anchor and no velocity corrections. Error grows rapidly on all horizontal axes.');
+
+  return parts.join('<br><br>');
+}
+
 // ── State application ─────────────────────────────────────────────────────────
 function fmt(v, d = 1) { return (v >= 0 ? '+' : '') + v.toFixed(d); }
 
@@ -306,6 +332,7 @@ function applyState(s) {
     badge.textContent = 'ALL SENSORS NOMINAL';
     badge.style.cssText = 'border-color:#004422;background:rgba(0,30,15,0.5);color:#00ee66';
   }
+  badge.dataset.tooltip = buildBadgeTooltip(s.failed);
 
   errHistory.push(s.error);
   if (errHistory.length > MAX_ERR) errHistory.shift();

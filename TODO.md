@@ -94,3 +94,8 @@ better-calibrated prior.
 | Mag | 3.0 m | diag(9, 9) | unchanged (not modelled as env-sensitive) |
 
 Calibration temperature: **20°C**. Baro bias formula: `0.12 × (T − 20)` metres.
+
+
+#### HIGHLIGHT
+
+- a combination of a multitude of sensors are used together for the kalman filter

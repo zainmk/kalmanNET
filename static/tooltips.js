@@ -1,30 +1,24 @@
 'use strict';
 
-// ── All tooltip content in one place ─────────────────────────────────────────
-// Keyed by element ID. Applied to [data-tooltip] elements at DOMContentLoaded.
-// HTML tags are supported (rendered via innerHTML — all content is hardcoded here).
-
 const TOOLTIPS = {
 
-  // ── Header badges ───────────────────────────────────────────────────────────
+  // Headers ───────────────────────────────────────────────────────────
 
-  'badge-helix': `The drone's true programmed path: a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. Using an analytic ground truth lets us measure exactly how much error the filter accumulates at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
+  'badge-helix': `The drone's true programmed path is a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. This serves as the analytic ground truth and lets us compare error accumulation in the filter at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
 
-  'badge-kf': `
-    <b>Linear Kalman Filter — predict → update</b><br><br>
-    <b>Predict</b> (every timestep, no sensors needed):<br>
-    &nbsp;x̂ ← F·x̂ &nbsp;&nbsp; propagate state via constant-velocity model<br>
-    &nbsp;P ← F·P·Fᵀ + Q &nbsp;&nbsp; uncertainty grows with time<br><br>
-    <b>Update</b> (once per active sensor per step):<br>
-    &nbsp;ε = z − H·x̂ &nbsp;&nbsp; innovation: what sensor saw vs filter predicted<br>
-    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ &nbsp;&nbsp; Kalman gain<br>
-    &nbsp;x̂ ← x̂ + K·ε &nbsp;&nbsp; correct the state<br>
-    &nbsp;P ← (I − K·H)·P &nbsp;&nbsp; reduce uncertainty<br><br>
-    R is per-sensor noise covariance. Noisier sensor → larger R → smaller K → smaller correction to the state.`,
+  'badge-kf': `The filter makes a physics-based guess each step, then corrects it toward sensor readings — weighting each sensor by how much it trusts it. That trust is encoded in <b>R</b>, fixed at calibration and never updated.<br><br>
+    <b>Predict:</b> x̂ ← F·x̂ &nbsp;|&nbsp; P ← F·P·Fᵀ + Q<br><br>
+    <b>Update (per sensor):</b><br>
+    &nbsp;K = P·Hᵀ·(H·P·Hᵀ + <b>R</b>)⁻¹<br>
+    &nbsp;x̂ ← x̂ + K·(z − H·x̂)<br><br>
+    R per sensor — GPS: diag(4,4,4) · IMU: diag(0.25,0.25,0.25) · Baro: [0.25] · Mag: diag(9,9)<br><br>
+    K shrinks as R grows. A noisier sensor moves the estimate less. A miscalibrated R moves it by the wrong amount.`,
 
-  // ── Sensor control panel ─────────────────────────────────────────────────────
 
-  'panel-sensor-control': `No single sensor is sufficient. GPS drifts without velocity context. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. Together, fused by the Kalman filter, they form a complete and robust estimate. Hover each sensor button for the specific math.`,
+
+  // Sensor control panel ─────────────────────────────────────────────────────
+
+  'panel-sensor-control': `No single sensor is sufficient. GPS drifts without velocity context. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. The Kalman filter 'fuses' these values to form a complete and robust position estimate. <br><br> The kalman filter suffers when the sensors are disabled, but it doesn't fail catastrophically — it falls back to dead-reckoning on the remaining sensors. Watch how the estimate degrades as you disable each sensor in turn.`,
 
   'btn-gps': `
     <b>GPS — absolute position [x, y, z]</b><br><br>
@@ -93,12 +87,18 @@ const TOOLTIPS = {
 
   'env-temp-label': `Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.`,
 
+
+
+
   // ── Sidebar panels ───────────────────────────────────────────────────────────
 
   'panel-sensor-readings': `Raw: the noisy measurement received from the sensor this timestep. KF Est: the Kalman filter's current best estimate of the same quantity, fused from all active sensors.`,
 
   'panel-error-title': `Plots position error (distance between Kalman estimate and ground truth) over the last 200 timesteps. Colour shifts green → amber → red as error grows. Watch it spike when sensors fail and the filter falls back to dead-reckoning.`,
 
+
+
+  
   // ── Bottom legend ────────────────────────────────────────────────────────────
 
   'legend-true':       `The analytically computed ground-truth helix. In real flight this is unknown — shown here only to benchmark the filter's accuracy.`,
@@ -114,7 +114,6 @@ const TOOLTIPS = {
 
 };
 
-// ── Apply all tooltips at startup ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   Object.entries(TOOLTIPS).forEach(([id, content]) => {
     const el = document.getElementById(id);
