@@ -1,5 +1,7 @@
 'use strict';
 
+let simPaused = true;
+
 // Coordinate mapping: sim [x,y,z] → three.js [x, z_sim→y, y_sim→z]
 function s2t(pt) { return [pt[0], pt[2], pt[1]]; }
 
@@ -97,6 +99,10 @@ const ghost  = makeDrone(true);
 ghost.scale.setScalar(0.9);
 scene.add(drone);
 scene.add(ghost);
+
+// Helix t=0: x=RADIUS·cos(0)=20, y=RADIUS·sin(0)=0, z=0 → s2t = (20, 0, 0)
+drone.position.set(20, 0, 0);
+ghost.position.set(20, 0, 0);
 
 // Error line between true and estimated position
 const errLineGeo = new THREE.BufferGeometry();
@@ -334,9 +340,11 @@ function applyState(s) {
   }
   badge.dataset.tooltip = buildBadgeTooltip(s.failed);
 
-  errHistory.push(s.error);
-  if (errHistory.length > MAX_ERR) errHistory.shift();
-  drawErrChart();
+  if (!simPaused) {
+    errHistory.push(s.error);
+    if (errHistory.length > MAX_ERR) errHistory.shift();
+    drawErrChart();
+  }
 
   controls.target.y += (ey - 8 - controls.target.y) * 0.008;
 }
@@ -385,6 +393,15 @@ async function toggleSensor(name) {
   await fetch('/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sensor: name }) });
 }
 
+async function togglePause() {
+  const res  = await fetch('/pause', { method: 'POST' });
+  const data = await res.json();
+  simPaused  = data.paused;
+  const btn  = document.getElementById('btn-play-pause');
+  btn.innerHTML  = simPaused ? '&#9654; PLAY' : '&#9646;&#9646; PAUSE';
+  btn.classList.toggle('playing', !simPaused);
+}
+
 async function resetSim() {
   await fetch('/reset', { method: 'POST' });
   errHistory.length = 0;
@@ -431,7 +448,10 @@ function onResize() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', onResize);
-window.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); resetSim(); } });
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  if (e.code === 'KeyR')  { e.preventDefault(); resetSim(); }
+});
 onResize();
 
 // ── Animation loop ────────────────────────────────────────────────────────────
@@ -442,9 +462,11 @@ function animate(now) {
   const dt = Math.min((now - prevNow) / 1000, 0.1);
   prevNow = now;
 
-  [drone, ghost].forEach(d => {
-    d.userData.rotors.forEach((r, i) => { r.rotation.y += (i % 2 === 0 ? 1 : -1) * 18 * dt; });
-  });
+  if (!simPaused) {
+    [drone, ghost].forEach(d => {
+      d.userData.rotors.forEach((r, i) => { r.rotation.y += (i % 2 === 0 ? 1 : -1) * 18 * dt; });
+    });
+  }
 
   controls.update();
   renderer.render(scene, camera);

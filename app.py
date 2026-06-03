@@ -14,14 +14,20 @@ sim_lock = threading.Lock()
 _state      = {}
 _state_lock = threading.Lock()
 
+_paused      = True
+_paused_lock = threading.Lock()
+
 
 def _sim_loop() -> None:
     while True:
-        with sim_lock:
-            state = sim.step()
-        with _state_lock:
-            _state.clear()
-            _state.update(state)
+        with _paused_lock:
+            paused = _paused
+        if not paused:
+            with sim_lock:
+                state = sim.step()
+            with _state_lock:
+                _state.clear()
+                _state.update(state)
         time.sleep(0.05)  # 20 Hz
 
 
@@ -75,6 +81,15 @@ def environment():
             temperature  = float(data.get("temperature",  20)),
         )
     return jsonify({"ok": True})
+
+
+@app.route("/pause", methods=["POST"])
+def pause():
+    global _paused
+    with _paused_lock:
+        _paused = not _paused
+        state = _paused
+    return jsonify({"paused": state})
 
 
 @app.route("/reset", methods=["POST"])

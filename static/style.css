@@ -38,6 +38,26 @@ header h1 {
   color: inherit;
 }
 a.badge:hover { border-color: #4466cc; color: #aaccff; }
+.play-pause-btn {
+  padding: 0 16px;
+  height: 24px;
+  min-width: 90px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 40, 20, 0.7);
+  border: 1px solid #00aa44;
+  color: #00ee66;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+.play-pause-btn:hover { background: rgba(0, 70, 35, 0.8); border-color: #00cc55; color: #00ff88; }
+.play-pause-btn.playing { border-color: #3355aa; background: rgba(15, 25, 70, 0.7); color: #5577dd; }
+.play-pause-btn.playing:hover { border-color: #4466cc; color: #88aaff; background: rgba(20, 35, 90, 0.8); }
 #badge-status {
   margin-left: auto;
   font-size: 11px;
