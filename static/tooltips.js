@@ -64,7 +64,7 @@ const TOOLTIPS = {
     &nbsp;x̂ ← x̂ + K·ε &nbsp; scalar correction propagated to all 6 states via K<br><br>
     <b><u>Kalman-NET:</u></b><br>
     &nbsp;σ = 0.5 m &nbsp;|&nbsp; R = [0.25] &nbsp;|&nbsp; calibrated at 20°C, zero bias<br>
-    Temperature introduces two compounding errors. At 50°C (dT = +30): actual σ ≈ 0.74 m <i>and</i> a persistent +3.6 m altitude bias (hot air has lower pressure — baro reads drone as lower than it is). At −10°C (dT = −30): −3.6 m bias. The filter trusts the biased reading at full weight because R is small and fixed — it cannot distinguish systematic offset from random noise. KalmanNET learns the relationship between temperature and effective baro error, inflating R when temperature deviates from calibration so the filter down-weights a persistently wrong measurement rather than anchoring altitude to it.`,
+    Temperature introduces two compounding errors. At 50°C (dT = +30): actual σ ≈ 0.74 m <i>and</i> a persistent −3.6 m altitude bias (hot air has lower pressure — baro reads drone as lower than it is). At −10°C (dT = −30): +3.6 m bias (cold air reads high). The filter trusts the biased reading at full weight because R is small and fixed — it cannot distinguish systematic offset from random noise. KalmanNET learns the relationship between temperature and effective baro error, inflating R when temperature deviates from calibration so the filter down-weights a persistently wrong measurement rather than anchoring altitude to it.`,
 
   'btn-mag': `
     <b>Magnetometer — horizontal position [x, y]</b><br><br>
@@ -88,7 +88,7 @@ const TOOLTIPS = {
 
   'env-wind-heading-label': `Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed > 0. The drone's autopilot partially counteracts the push — the true path bows rather than drifts without bound.`,
 
-  'env-temp-label': `Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = 0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.`,
+  'env-temp-label': `Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (actual σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = −0.12·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it is). Kalman filter assumes 20°C at all times.`,
 
 
 

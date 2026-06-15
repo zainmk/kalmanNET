@@ -109,7 +109,7 @@ class DroneSim:
             "mag":  [3.0, 3.0],
         }
         # Temperature-induced barometer bias: hot air = lower pressure = reads too low
-        baro_bias = dT * 0.12  # metres per °C deviation
+        baro_bias = -dT * 0.12  # metres per °C deviation (hot → reads low, cold → reads high)
 
         # ── Kalman predict ────────────────────────────────────────────────────
         self.kf.predict()
