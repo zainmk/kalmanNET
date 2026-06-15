@@ -10,8 +10,9 @@
 <header>
   <h1> kalman-net // Algorithmic Sensor Resiliency </h1>
   <span class="badge" id="badge-helix" data-tooltip="">HELIX TRAJECTORY </span>
-  <a class="badge" id="badge-kf" data-tooltip="" href="https://en.wikipedia.org/wiki/Kalman_filter" target="_blank" rel="noopener noreferrer">LINEAR KALMAN FILTER</a>
+  <a class="badge" id="badge-kf" data-tooltip="" href="https://en.wikipedia.org/wiki/Kalman_filter" target="_blank" rel="noopener noreferrer">LINEAR KALMAN-FILTER</a>
   <button class="play-pause-btn" id="btn-play-pause" onclick="togglePause()">&#9654; &nbsp;PLAY</button>
+  <button class="reset-header-btn" onclick="resetSim()">↺ &nbsp;RESET</button>
   <span id="badge-status" data-tooltip="">ALL SENSORS NOMINAL</span>
 </header>
 
@@ -82,7 +83,6 @@
         <span class="indicator"></span>
       </button>
 
-      <button class="reset-btn" onclick="resetSim()">↺ &nbsp;RESET SIMULATION</button>
     </div>
 
     <!-- Sensor readings -->

@@ -58,6 +58,23 @@ a.badge:hover { border-color: #4466cc; color: #aaccff; }
 .play-pause-btn:hover { background: rgba(0, 70, 35, 0.8); border-color: #00cc55; color: #00ff88; }
 .play-pause-btn.playing { border-color: #3355aa; background: rgba(15, 25, 70, 0.7); color: #5577dd; }
 .play-pause-btn.playing:hover { border-color: #4466cc; color: #88aaff; background: rgba(20, 35, 90, 0.8); }
+.reset-header-btn {
+  padding: 0 14px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 15, 45, 0.6);
+  border: 1px solid #1e2850;
+  color: #4455aa;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+.reset-header-btn:hover { background: #141630; border-color: #4466cc; color: #88aaff; }
 #badge-status {
   margin-left: auto;
   font-size: 11px;
