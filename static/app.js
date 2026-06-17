@@ -1,6 +1,7 @@
 'use strict';
 
-let simPaused = true;
+let simPaused  = true;
+let isTraining = false;
 
 // Coordinate mapping: sim [x,y,z] → three.js [x, z_sim→y, y_sim→z]
 function s2t(pt) { return [pt[0], pt[2], pt[1]]; }
@@ -134,6 +135,7 @@ function makeTrailLine(color) {
 const trueTrail = makeTrailLine(0x00ff44);
 const estTrail  = makeTrailLine(0x00aaff);
 const rawTrail  = makeTrailLine(0xff3300);
+const knTrail   = makeTrailLine(0x00ccbb);
 
 function updateTrail(line, trail) {
   const attr = line.geometry.attributes.position;
@@ -171,10 +173,11 @@ const imuArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vec
 scene.add(imuArrow);
 
 // ── Error chart ───────────────────────────────────────────────────────────────
-const errCanvas  = document.getElementById('err-chart');
-const errCtx     = errCanvas.getContext('2d');
-const errHistory = [];
-const MAX_ERR    = 200;
+const errCanvas    = document.getElementById('err-chart');
+const errCtx       = errCanvas.getContext('2d');
+const errHistory   = [];
+const errHistoryKN = [];
+const MAX_ERR      = 200;
 
 function drawErrChart() {
   const w = errCanvas.clientWidth || 240;
@@ -184,8 +187,12 @@ function drawErrChart() {
   errCtx.clearRect(0, 0, w, h);
   if (errHistory.length < 2) return;
 
-  const peak = Math.max(10, ...errHistory) * 1.15;
+  const allVals = errHistoryKN.length > 1
+    ? [...errHistory, ...errHistoryKN]
+    : errHistory;
+  const peak = Math.max(10, ...allVals) * 1.15;
 
+  // Grid lines
   errCtx.strokeStyle = '#0c1433';
   errCtx.lineWidth = 1;
   [5, 10, 15, 20].forEach(v => {
@@ -193,16 +200,23 @@ function drawErrChart() {
     if (y > 0 && y < h) { errCtx.beginPath(); errCtx.moveTo(0, y); errCtx.lineTo(w, y); errCtx.stroke(); }
   });
 
-  errCtx.beginPath();
-  errHistory.forEach((val, i) => {
-    const x = (i / (MAX_ERR - 1)) * w;
-    const y = h - (val / peak) * h;
-    i === 0 ? errCtx.moveTo(x, y) : errCtx.lineTo(x, y);
-  });
+  function drawLine(history, color) {
+    if (history.length < 2) return;
+    errCtx.beginPath();
+    history.forEach((val, i) => {
+      const x = (i / (MAX_ERR - 1)) * w;
+      const y = h - (val / peak) * h;
+      i === 0 ? errCtx.moveTo(x, y) : errCtx.lineTo(x, y);
+    });
+    errCtx.strokeStyle = color;
+    errCtx.lineWidth = 1.5;
+    errCtx.stroke();
+  }
+
   const maxErr = Math.max(...errHistory);
-  errCtx.strokeStyle = maxErr > 10 ? '#ff4422' : maxErr > 4 ? '#ffaa22' : '#00ee66';
-  errCtx.lineWidth = 1.5;
-  errCtx.stroke();
+  const kfColor = maxErr > 10 ? '#ff4422' : maxErr > 4 ? '#ffaa22' : '#00ee66';
+  drawLine(errHistory,   kfColor);
+  drawLine(errHistoryKN, '#00ccbb');
 
   errCtx.strokeStyle = '#0e1840';
   errCtx.lineWidth = 1;
@@ -272,6 +286,7 @@ function applyState(s) {
   updateTrail(trueTrail, s.true_trail);
   updateTrail(estTrail,  s.est_trail);
   updateTrail(rawTrail,  s.raw_trail);
+  updateTrail(knTrail,   s.kn_trail || []);
 
   const r = s.readings;
   if (r.gps) {
@@ -343,10 +358,142 @@ function applyState(s) {
   if (!simPaused) {
     errHistory.push(s.error);
     if (errHistory.length > MAX_ERR) errHistory.shift();
+    if (s.kn_trained) {
+      errHistoryKN.push(s.kn_error);
+      if (errHistoryKN.length > MAX_ERR) errHistoryKN.shift();
+    }
     drawErrChart();
   }
 
+  // KN R̂ display + training lock
+  updateKNPanel(s);
+
+  // Sync play button if backend paused state differs (e.g. after training auto-reset)
+  if ('paused' in s && s.paused !== simPaused) {
+    simPaused = s.paused;
+    const btn = document.getElementById('btn-play-pause');
+    btn.innerHTML = simPaused ? '&#9654; PLAY' : '&#9646;&#9646; PAUSE';
+    btn.classList.toggle('playing', !simPaused);
+  }
+
   controls.target.y += (ey - 8 - controls.target.y) * 0.008;
+}
+
+// ── KalmanNET panel ───────────────────────────────────────────────────────────
+const KN_CALIB = { gps: [4,4,4], imu: [0.25,0.25,0.25], baro: [0.25], mag: [9,9] };
+
+const KN_PHASES = [
+  'CALM BASELINE',
+  'WIND  10 m/s',
+  'WIND  20 m/s',
+  'WIND   5 m/s',
+  'CALM',
+  'TEMP  40°C',
+  'TEMP  50°C',
+  'TEMP -10°C',
+  'COMBINED STRESS',
+  'RETURN TO CALM',
+];
+
+function renderPhaseList(phaseIdx, step) {
+  const el = document.getElementById('kn-phase-list');
+  const optimising = step === 'training';
+  el.innerHTML = KN_PHASES.map((name, i) => {
+    let cls, icon;
+    if (optimising || i < phaseIdx) {
+      cls = 'kn-pl-done'; icon = '✓';
+    } else if (i === phaseIdx) {
+      cls = 'kn-pl-active'; icon = '▶';
+    } else {
+      cls = 'kn-pl-pending'; icon = '·';
+    }
+    return `<div class="kn-pl-row ${cls}"><span class="kn-pl-icon">${icon}</span><span>${name.trim()}</span></div>`;
+  }).join('');
+  if (optimising) {
+    el.innerHTML += `<div class="kn-pl-row kn-pl-active"><span class="kn-pl-icon">▶</span><span>OPTIMISING NETWORK</span></div>`;
+  }
+}
+
+const _LOCK_IDS = [
+  'btn-play-pause', 'btn-reset-header',
+  'env-wind-speed', 'env-wind-heading', 'env-temp', 'env-reset-btn',
+  'btn-gps', 'btn-imu', 'btn-baro', 'btn-mag',
+];
+
+function setTrainingLock(locked) {
+  isTraining = locked;
+  _LOCK_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  });
+}
+
+function updateKNPanel(s) {
+  const dot    = document.getElementById('kn-status-dot');
+  const label  = document.getElementById('kn-status-label');
+  const info   = document.getElementById('kn-training-info');
+  const btn    = document.getElementById('btn-train');
+  const rhat   = document.getElementById('kn-rhat');
+  const t      = s.training || {};
+
+  if (t.active) {
+    setTrainingLock(true);
+    dot.className   = 'kn-status-dot training';
+    label.textContent = t.step === 'training' ? 'OPTIMISING' : 'COLLECTING DATA';
+    info.style.display = '';
+    document.getElementById('kn-bar-fill').style.width = ((t.progress || 0) * 100).toFixed(1) + '%';
+    renderPhaseList(t.phase_idx ?? 0, t.step);
+    btn.disabled = true;
+    btn.textContent = '⏳ TRAINING…';
+    rhat.style.display = 'none';
+    // Animate env sliders to show current training condition
+    if (t.wind !== undefined) {
+      document.getElementById('env-wind-speed').value = t.wind;
+      document.getElementById('env-wind-speed-val').textContent = t.wind.toFixed(1) + ' m/s';
+    }
+    if (t.temp !== undefined) {
+      document.getElementById('env-temp').value = t.temp;
+      document.getElementById('env-temp-val').textContent = t.temp.toFixed(0) + '°C';
+    }
+  } else if (s.kn_trained) {
+    setTrainingLock(false);
+    dot.className   = 'kn-status-dot active';
+    label.textContent = 'ACTIVE';
+    info.style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '&#8635; &nbsp;RETRAIN';
+    rhat.style.display = '';
+    renderRhat(s.kn_r_hat || {});
+  } else {
+    setTrainingLock(false);
+    dot.className   = 'kn-status-dot';
+    label.textContent = 'UNTRAINED';
+    info.style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '&#9654; &nbsp;TRAIN KALMANNET';
+    rhat.style.display = 'none';
+  }
+}
+
+function renderRhat(rhat) {
+  const grid = document.getElementById('kn-rhat-grid');
+  const rows = [
+    ['GPS',  rhat.gps,  KN_CALIB.gps],
+    ['IMU',  rhat.imu,  KN_CALIB.imu],
+    ['BARO', rhat.baro, KN_CALIB.baro],
+    ['MAG',  rhat.mag,  KN_CALIB.mag],
+  ];
+  grid.innerHTML = rows.map(([name, vals, calib]) => {
+    if (!vals) return '';
+    const ratio = vals[0] / calib[0];
+    const cls   = ratio > 3 ? 'rhat-high' : ratio > 1.5 ? 'rhat-mid' : 'rhat-ok';
+    const str   = vals.map(v => v.toFixed(2)).join(', ');
+    return `<span class="rhat-name">${name}</span><span class="rhat-val ${cls}">${str}</span><span class="rhat-ratio ${cls}">×${ratio.toFixed(1)}</span>`;
+  }).join('');
+}
+
+async function startTraining() {
+  await fetch('/train', { method: 'POST' });
 }
 
 // ── Environment controls ──────────────────────────────────────────────────────
@@ -405,9 +552,11 @@ async function togglePause() {
 async function resetSim() {
   await fetch('/reset', { method: 'POST' });
   errHistory.length = 0;
+  errHistoryKN.length = 0;
   trueTrail.geometry.setDrawRange(0, 0);
   estTrail.geometry.setDrawRange(0, 0);
   rawTrail.geometry.setDrawRange(0, 0);
+  knTrail.geometry.setDrawRange(0, 0);
   camera.position.set(60, 38, 60);
   controls.target.set(0, 8, 0);
   controls.update();
@@ -449,8 +598,8 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 window.addEventListener('keydown', e => {
-  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
-  if (e.code === 'KeyR')  { e.preventDefault(); resetSim(); }
+  if (e.code === 'Space') { e.preventDefault(); if (!isTraining) togglePause(); }
+  if (e.code === 'KeyR')  { e.preventDefault(); if (!isTraining) resetSim(); }
 });
 onResize();
 

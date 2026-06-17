@@ -6,6 +6,10 @@ const TOOLTIPS = {
 
   'badge-helix': `The drone's true programmed path is a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. This serves as the analytic ground truth and lets us compare error accumulation in the filter at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
 
+  'badge-kn': `<b>KalmanNET</b> — Neural Network-Aided Kalman Filtering<br><br>
+    Replaces the fixed R matrix with a per-sensor MLP that predicts the effective measurement noise covariance from a sliding window of recent innovations. Trained on a scripted calibration flight where ground truth is known; at inference only the live innovation sequence is used — no explicit environment state required.<br><br>
+    Click to open the original paper (Revach et al., 2022).`,
+
   'badge-kf': `<b>Purpose</b><br>
     The Linear Kalman Filter is used to optimally fuse the data from multiple noisy sensors into a single estimate — the minimum-variance solution to when multiple sensors are observing the same underlying state and accuracy of data is required.<br><br>
     <b>Predict</b> — advance state using the motion model:<br>

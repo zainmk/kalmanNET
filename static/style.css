@@ -246,6 +246,108 @@ a.badge:hover { border-color: #4466cc; color: #aaccff; }
 }
 .reset-btn:hover { background: #141630; border-color: #4466cc; color: #88aaff; }
 
+/* ── KalmanNET panel ── */
+.kn-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.kn-status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #334;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.kn-status-dot.active   { background: #00ccbb; box-shadow: 0 0 6px #00ccbb; }
+.kn-status-dot.training { background: #ffaa22; box-shadow: 0 0 6px #ffaa22; animation: blink 0.8s step-end infinite; }
+.kn-status-label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: #445566;
+}
+.kn-status-dot.active   + .kn-status-label { color: #00ccbb; }
+.kn-status-dot.training + .kn-status-label { color: #ffaa22; }
+.kn-training-info { margin-bottom: 8px; }
+.kn-phase {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #ffaa22;
+  margin-bottom: 5px;
+  min-height: 12px;
+}
+.kn-phase-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kn-pl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  padding: 1px 0;
+  font-family: 'Courier New', monospace;
+}
+.kn-pl-icon { width: 10px; text-align: center; flex-shrink: 0; }
+.kn-pl-done    { color: #336655; }
+.kn-pl-active  { color: #ffaa22; }
+.kn-pl-pending { color: #223344; }
+.kn-bar-wrap {
+  height: 4px;
+  background: #0d0e22;
+  border: 1px solid #1e2850;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kn-bar-fill {
+  height: 100%;
+  background: #ffaa22;
+  width: 0%;
+  transition: width 0.4s ease;
+  border-radius: 2px;
+}
+.kn-train-btn {
+  width: 100%;
+  padding: 7px;
+  margin-top: 2px;
+  background: rgba(0, 40, 35, 0.6);
+  border: 1px solid #006655;
+  color: #00bbaa;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+.kn-train-btn:hover:not(:disabled) { background: rgba(0, 60, 50, 0.7); border-color: #00ccbb; color: #00eedd; }
+.kn-train-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kn-rhat { margin-top: 10px; }
+.kn-rhat-title {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #445566;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.kn-rhat-sub { color: #334455; letter-spacing: 0; font-size: 8px; }
+.kn-rhat-grid {
+  display: grid;
+  grid-template-columns: 32px 1fr 28px;
+  gap: 2px 6px;
+  align-items: center;
+}
+.rhat-name  { font-size: 9px; color: #556688; letter-spacing: 1px; }
+.rhat-val   { font-size: 9px; font-family: 'Courier New', monospace; }
+.rhat-ratio { font-size: 9px; font-family: 'Courier New', monospace; text-align: right; }
+.rhat-ok    { color: #00aa88; }
+.rhat-mid   { color: #ffaa22; }
+.rhat-high  { color: #ff5533; }
+
 /* ── Stats ── */
 .stat-row {
   display: flex;

@@ -11,8 +11,9 @@
   <h1> kalman-net // Algorithmic Sensor Resiliency </h1>
   <span class="badge" id="badge-helix" data-tooltip="">HELIX TRAJECTORY </span>
   <a class="badge" id="badge-kf" data-tooltip="" href="https://en.wikipedia.org/wiki/Kalman_filter" target="_blank" rel="noopener noreferrer">LINEAR KALMAN-FILTER</a>
+  <a class="badge" id="badge-kn" data-tooltip="" href="https://pure.tue.nl/ws/files/201346390/KalmanNet_Neural_Network_Aided_Kalman_Filtering_for_Partially_Known_Dynamics.pdf" target="_blank" rel="noopener noreferrer">KALMANNET</a>
   <button class="play-pause-btn" id="btn-play-pause" onclick="togglePause()">&#9654; &nbsp;PLAY</button>
-  <button class="reset-header-btn" onclick="resetSim()">↺ &nbsp;RESET</button>
+  <button class="reset-header-btn" id="btn-reset-header" onclick="resetSim()">↺ &nbsp;RESET</button>
   <span id="badge-status" data-tooltip="">ALL SENSORS NOMINAL</span>
 </header>
 
@@ -133,6 +134,24 @@
       <canvas id="err-chart"></canvas>
     </div>
 
+    <!-- KalmanNET panel -->
+    <div class="panel" id="panel-kn">
+      <div class="panel-title">KalmanNET</div>
+      <div class="kn-status-row">
+        <span class="kn-status-dot" id="kn-status-dot"></span>
+        <span class="kn-status-label" id="kn-status-label">UNTRAINED</span>
+      </div>
+      <div class="kn-training-info" id="kn-training-info" style="display:none">
+        <div class="kn-bar-wrap"><div class="kn-bar-fill" id="kn-bar-fill"></div></div>
+        <div class="kn-phase-list" id="kn-phase-list"></div>
+      </div>
+      <button class="kn-train-btn" id="btn-train" onclick="startTraining()">&#9654; &nbsp;TRAIN KALMANNET</button>
+      <div class="kn-rhat" id="kn-rhat" style="display:none">
+        <div class="kn-rhat-title">ADAPTED R̂ &nbsp;<span class="kn-rhat-sub">(vs calibrated)</span></div>
+        <div class="kn-rhat-grid" id="kn-rhat-grid"></div>
+      </div>
+    </div>
+
   </div><!-- sidebar -->
 
   <!-- Legend — centered pill at bottom of canvas -->
@@ -148,6 +167,7 @@
       <div class="overlay-legend-row" id="legend-baro"       data-tooltip=""><div class="leg-dot"  style="background:#ff44aa"></div>Baro</div>
       <div class="overlay-legend-row" id="legend-mag"        data-tooltip=""><div class="leg-dot"  style="background:#bb44ff"></div>Mag</div>
       <div class="overlay-legend-row" id="legend-unc"        data-tooltip=""><div class="leg-dot"  style="background:#0055ff; opacity:0.5"></div>Unc.</div>
+      <div class="overlay-legend-row" id="legend-kn"         data-tooltip=""><div class="leg-line" style="background:#00ccbb"></div>KalmanNET</div>
     </div>
   </div>
 
