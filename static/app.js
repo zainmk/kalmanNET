@@ -252,9 +252,10 @@ function buildBadgeTooltip(failed) {
 // ── State application ─────────────────────────────────────────────────────────
 function fmt(v, d = 1) { return (v >= 0 ? '+' : '') + v.toFixed(d); }
 
-function setSR(base, rawVal, kfVal, d) {
+function setSR(base, rawVal, kfVal, knVal, d) {
   const rawEl = document.getElementById(base + '-raw');
   const kfEl  = document.getElementById(base + '-kf');
+  const knEl  = document.getElementById(base + '-kn');
   if (rawVal === null) {
     rawEl.textContent = 'OFFLINE';
     rawEl.className = 'sr-raw offline';
@@ -263,6 +264,15 @@ function setSR(base, rawVal, kfVal, d) {
     rawEl.className = 'sr-raw';
   }
   kfEl.textContent = fmt(kfVal, d);
+  if (knEl) {
+    if (knVal !== null) {
+      knEl.textContent = fmt(knVal, d);
+      knEl.className = 'sr-kn trained';
+    } else {
+      knEl.textContent = '—';
+      knEl.className = 'sr-kn';
+    }
+  }
 }
 
 let latestState = null;
@@ -331,16 +341,17 @@ function applyState(s) {
     document.getElementById(`btn-${name}`).className = 'sensor-btn ' + (s.failed[name] ? 'failed' : 'active');
   });
 
-  const k = s.est;
-  setSR('sr-gps-x',  r.gps  ? r.gps[0]  : null, k[0], 1);
-  setSR('sr-gps-y',  r.gps  ? r.gps[1]  : null, k[1], 1);
-  setSR('sr-gps-z',  r.gps  ? r.gps[2]  : null, k[2], 1);
-  setSR('sr-imu-vx', r.imu  ? r.imu[0]  : null, k[3], 2);
-  setSR('sr-imu-vy', r.imu  ? r.imu[1]  : null, k[4], 2);
-  setSR('sr-imu-vz', r.imu  ? r.imu[2]  : null, k[5], 2);
-  setSR('sr-baro-z', r.baro ? r.baro[0] : null, k[2], 1);
-  setSR('sr-mag-x',  r.mag  ? r.mag[0]  : null, k[0], 1);
-  setSR('sr-mag-y',  r.mag  ? r.mag[1]  : null, k[1], 1);
+  const k  = s.est;
+  const kn = s.kn_trained ? (s.kn_est || []) : null;
+  setSR('sr-gps-x',  r.gps  ? r.gps[0]  : null, k[0], kn ? kn[0] : null, 1);
+  setSR('sr-gps-y',  r.gps  ? r.gps[1]  : null, k[1], kn ? kn[1] : null, 1);
+  setSR('sr-gps-z',  r.gps  ? r.gps[2]  : null, k[2], kn ? kn[2] : null, 1);
+  setSR('sr-imu-vx', r.imu  ? r.imu[0]  : null, k[3], kn ? kn[3] : null, 2);
+  setSR('sr-imu-vy', r.imu  ? r.imu[1]  : null, k[4], kn ? kn[4] : null, 2);
+  setSR('sr-imu-vz', r.imu  ? r.imu[2]  : null, k[5], kn ? kn[5] : null, 2);
+  setSR('sr-baro-z', r.baro ? r.baro[0] : null, k[2], kn ? kn[2] : null, 1);
+  setSR('sr-mag-x',  r.mag  ? r.mag[0]  : null, k[0], kn ? kn[0] : null, 1);
+  setSR('sr-mag-y',  r.mag  ? r.mag[1]  : null, k[1], kn ? kn[1] : null, 1);
 
   const badge = document.getElementById('badge-status');
   if (s.active === 0) {
@@ -380,7 +391,6 @@ function applyState(s) {
 }
 
 // ── KalmanNET panel ───────────────────────────────────────────────────────────
-const KN_CALIB = { gps: [4,4,4], imu: [0.25,0.25,0.25], baro: [0.25], mag: [9,9] };
 
 const KN_PHASES = [
   'CALM BASELINE',
@@ -463,7 +473,7 @@ function updateKNPanel(s) {
     btn.disabled = false;
     btn.innerHTML = '&#8635; &nbsp;RETRAIN';
     rhat.style.display = '';
-    renderRhat(s.kn_r_hat || {});
+    renderKratio(s.kn_k_ratio || {});
   } else {
     setTrainingLock(false);
     dot.className   = 'kn-status-dot';
@@ -475,20 +485,24 @@ function updateKNPanel(s) {
   }
 }
 
-function renderRhat(rhat) {
+function renderKratio(kratio) {
   const grid = document.getElementById('kn-rhat-grid');
   const rows = [
-    ['GPS',  rhat.gps,  KN_CALIB.gps],
-    ['IMU',  rhat.imu,  KN_CALIB.imu],
-    ['BARO', rhat.baro, KN_CALIB.baro],
-    ['MAG',  rhat.mag,  KN_CALIB.mag],
+    ['GPS',  kratio.gps],
+    ['IMU',  kratio.imu],
+    ['BARO', kratio.baro],
+    ['MAG',  kratio.mag],
   ];
-  grid.innerHTML = rows.map(([name, vals, calib]) => {
-    if (!vals) return '';
-    const ratio = vals[0] / calib[0];
-    const cls   = ratio > 3 ? 'rhat-high' : ratio > 1.5 ? 'rhat-mid' : 'rhat-ok';
-    const str   = vals.map(v => v.toFixed(2)).join(', ');
-    return `<span class="rhat-name">${name}</span><span class="rhat-val ${cls}">${str}</span><span class="rhat-ratio ${cls}">×${ratio.toFixed(1)}</span>`;
+  grid.innerHTML = rows.map(([name, vals]) => {
+    if (!vals || !vals.length) return '';
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const dev  = Math.abs(mean - 1.0);
+    const cls  = dev > 2.0 ? 'rhat-high' : dev > 0.8 ? 'rhat-mid' : 'rhat-ok';
+    const str  = vals.map(v => v.toFixed(2)).join(', ');
+    const dir  = mean > 1.15 ? '↑' : mean < 0.85 ? '↓' : '~';
+    return `<span class="rhat-name">${name}</span>` +
+           `<span class="rhat-val ${cls}">${str}</span>` +
+           `<span class="rhat-ratio ${cls}">${dir}×${mean.toFixed(1)}</span>`;
   }).join('');
 }
 

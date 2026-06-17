@@ -442,14 +442,17 @@ input[type="range"]::-moz-range-thumb {
 .sr-unit { font-size: 9px; color: #253060; margin-left: 5px; }
 .sr-grid {
   display: grid;
-  grid-template-columns: 28px 1fr 1fr;
+  grid-template-columns: 26px 1fr 1fr 1fr;
   row-gap: 2px;
 }
 .sr-col-hdr { font-size: 8px; letter-spacing: 1px; text-align: right; color: #2a4060; padding-bottom: 2px; }
 .sr-col-hdr.kf { color: #1e3f7a; }
+.sr-col-hdr.kn { color: #00665e; }
 .sr-ax  { font-size: 9px; color: #334466; align-self: center; }
 .sr-raw { text-align: right; font-size: 10px; color: #6688aa; font-family: 'Courier New', monospace; }
 .sr-kf  { text-align: right; font-size: 10px; color: #3a88ee; font-family: 'Courier New', monospace; }
+.sr-kn  { text-align: right; font-size: 10px; color: #224440; font-family: 'Courier New', monospace; }
+.sr-kn.trained { color: #00ccbb; }
 .sr-raw.offline { color: #552222; font-size: 9px; letter-spacing: 0.5px; }
 
 /* ── Tooltip ── */

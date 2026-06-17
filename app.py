@@ -1,6 +1,9 @@
 import json
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 from flask import Flask, Response, jsonify, request
 
@@ -110,8 +113,24 @@ def _run_training() -> None:
             "temp":     20,
         })
 
-    # CPU-bound training — runs outside sim_lock
-    sim.kn.train(buf)
+    # Save buffer for the training script
+    buf_path = Path(__file__).parent / "training_buffer.json"
+    with open(buf_path, "w") as f:
+        json.dump(buf, f)
+
+    # Run training script as a subprocess (keeps app.py responsive; ~15–30s on CPU)
+    script = Path(__file__).parent / "train_kalmannet_gru.py"
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).parent),
+    )
+
+    if result.returncode == 0:
+        with sim_lock:
+            sim.kn._load()
+    else:
+        print("[training] GRU training failed:\n", result.stderr[-1000:])
 
     # Pause immediately so the sim loop stops while we reset
     with _paused_lock:

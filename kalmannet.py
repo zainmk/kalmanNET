@@ -1,228 +1,147 @@
+from pathlib import Path
+
 import numpy as np
+
+try:
+    import torch
+    import torch.nn as nn
+except ImportError as e:
+    raise ImportError(
+        "PyTorch is required for KalmanNET GRU. "
+        "Install with: pip install torch --index-url https://download.pytorch.org/whl/cpu"
+    ) from e
 
 from kalman_filter import KalmanFilter
 
+MODEL_PATH = Path(__file__).parent / "kalmannet_model.pt"
 
-# ── Tiny two-layer MLP ────────────────────────────────────────────────────────
+SENSOR_ORDER   = ["gps", "imu", "baro", "mag"]
+SENSOR_DIMS    = {"gps": 3, "imu": 3, "baro": 1, "mag": 2}
+SENSOR_OFFSETS = {"gps": 0, "imu": 3, "baro": 6, "mag": 7}
+TOTAL_MEAS_DIM = 9    # 3 + 3 + 1 + 2
+STATE_DIM      = 6
+HIDDEN_DIM     = 64
 
-class _MLP:
+
+class _GRUKalmanNET(nn.Module):
     """
-    Two-layer fully-connected network with ReLU hidden layer.
-    Predicts log(R_diagonal) from a flattened innovation window.
-    All maths is plain numpy — no framework dependency.
+    Shared GRU with per-sensor K-matrix output heads.
+
+    Input:  9D concatenated innovation vector (zero-padded for inactive sensors)
+    Hidden: 64D context — accumulates temporal patterns across filter steps
+    Output: per-sensor K matrices ∈ (0, 2)^(6×m) via 2·sigmoid activation
+
+    The sigmoid bound ensures K is always positive and caps at 2× per element,
+    preventing runaway updates while allowing amplification (K > 1, e.g. GPS in wind)
+    or dampening (K < 1, e.g. BARO in heat).
     """
 
-    def __init__(self, n_in: int, n_hidden: int, n_out: int, seed: int = 0):
-        rng = np.random.default_rng(seed)
-        self.W1 = rng.standard_normal((n_in, n_hidden)) * np.sqrt(2.0 / n_in)
-        self.b1 = np.zeros(n_hidden)
-        self.W2 = rng.standard_normal((n_hidden, n_out)) * np.sqrt(2.0 / n_hidden)
-        self.b2 = np.zeros(n_out)
-        # Input normalisation stats — set during training
-        self.x_mean = np.zeros(n_in)
-        self.x_std  = np.ones(n_in)
+    def __init__(self):
+        super().__init__()
+        self.gru = nn.GRU(TOTAL_MEAS_DIM, HIDDEN_DIM, batch_first=False)
+        self.heads = nn.ModuleDict({
+            s: nn.Linear(HIDDEN_DIM, STATE_DIM * SENSOR_DIMS[s])
+            for s in SENSOR_ORDER
+        })
 
-    # ── Forward ───────────────────────────────────────────────────────────────
+    def forward(self, innov_9d, h=None):
+        """
+        innov_9d : (seq_len, 1, 9) tensor  — batch dim must be 1
+        h        : (1, 1, HIDDEN_DIM) or None
+        Returns  : {sensor: (seq_len, STATE_DIM, sensor_dim)} K tensors, new h
+        """
+        out, h_new = self.gru(innov_9d, h)          # out: (T, 1, hidden)
+        out = out.squeeze(1)                          # (T, hidden)
+        K_out = {}
+        for s in SENSOR_ORDER:
+            raw   = self.heads[s](out)                # (T, state_dim * sensor_dim)
+            K_out[s] = 2.0 * torch.sigmoid(raw).view(-1, STATE_DIM, SENSOR_DIMS[s])
+        return K_out, h_new
 
-    def forward(self, x: np.ndarray) -> np.ndarray:
-        """Single-sample inference.  x: (n_in,) → (n_out,)."""
-        xn = (x - self.x_mean) / self.x_std
-        h  = np.maximum(0.0, xn @ self.W1 + self.b1)
-        return h @ self.W2 + self.b2
-
-    def forward_batch(self, X: np.ndarray):
-        """Batch forward.  X: (N, n_in) → out (N,n_out), h (N,n_hidden), Xn (N,n_in)."""
-        Xn = (X - self.x_mean) / self.x_std
-        H  = np.maximum(0.0, Xn @ self.W1 + self.b1)
-        return H @ self.W2 + self.b2, H, Xn
-
-    # ── Backward (mini-batch SGD) ─────────────────────────────────────────────
-
-    def step(self, Xn: np.ndarray, H: np.ndarray,
-             Y_pred: np.ndarray, Y_true: np.ndarray, lr: float) -> float:
-        """One gradient step.  Inputs are already normalised batch arrays."""
-        N   = len(Xn)
-        dL  = (Y_pred - Y_true) / N        # (N, n_out)
-        loss = float(np.mean((Y_pred - Y_true) ** 2))
-
-        dW2  = H.T @ dL                    # (n_hidden, n_out)
-        db2  = dL.sum(axis=0)
-        dh   = dL @ self.W2.T              # (N, n_hidden)
-        dh  *= (H > 0)                     # ReLU mask
-        dW1  = Xn.T @ dh                   # (n_in, n_hidden)
-        db1  = dh.sum(axis=0)
-
-        self.W1 -= lr * dW1
-        self.b1 -= lr * db1
-        self.W2 -= lr * dW2
-        self.b2 -= lr * db2
-        return loss
-
-
-# ── KalmanNET ─────────────────────────────────────────────────────────────────
 
 class KalmanNET:
     """
-    R-adaptive Kalman filter.
+    GRU-based KalmanNET runtime.
 
-    Each sensor has a small MLP that maps a sliding window of recent
-    innovations → log(R_diagonal).  At inference only the live innovation
-    sequence is required; no explicit knowledge of the environment is used.
+    Predicts the Kalman gain K directly from the temporal pattern of innovations,
+    replacing the fixed Riccati-optimal K. Trained end-to-end on position MSE
+    so K can go above the Riccati value (trust sensor more — wind) or below
+    (trust sensor less — temperature bias), which R-prediction cannot do.
 
-    Training uses oracle R targets computed from the simulation's known
-    noise formulas — the supervision signal available during a calibration
-    flight where ground truth exists.
+    Falls back to standard KF equations when no trained model is loaded.
     """
-
-    WINDOW   = 20     # innovation history length  (1 s at 20 Hz)
-    HIDDEN   = 16
-    EPOCHS   = 250
-    BATCH    = 64
-    LR_INIT  = 8e-3
-    LR_FINAL = 1e-3
-
-    # Calibrated (calm-condition) R diagonals — same as KalmanFilter defaults
-    R_CALIB: dict = {
-        "gps":  np.array([4.0,  4.0,  4.0 ]),
-        "imu":  np.array([0.25, 0.25, 0.25]),
-        "baro": np.array([0.25]),
-        "mag":  np.array([9.0,  9.0  ]),
-    }
-    _DIMS: dict = {"gps": 3, "imu": 3, "baro": 1, "mag": 2}
 
     def __init__(self, dt: float = 0.05):
         self.dt      = dt
         self.trained = False
-        self._nets: dict  = {s: None for s in self.R_CALIB}
-        self._wins: dict  = {s: []   for s in self.R_CALIB}
-        self._r_hat: dict = {s: self.R_CALIB[s].tolist() for s in self.R_CALIB}
-        self._reset_kf()
+        self._net    = _GRUKalmanNET()
+        self._h      = None                       # GRU hidden state (1, 1, HIDDEN_DIM)
+        self._kf     = KalmanFilter(dt=dt)
+        self._k_ratio = {s: [1.0] * SENSOR_DIMS[s] for s in SENSOR_ORDER}
+        if MODEL_PATH.exists():
+            self._load()
 
-    def _reset_kf(self) -> None:
-        self.kf = KalmanFilter(dt=self.dt)
+    def _load(self) -> bool:
+        try:
+            state = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
+            self._net.load_state_dict(state)
+            self._net.eval()
+            self.trained = True
+            return True
+        except Exception as exc:
+            print(f"[KalmanNET] Failed to load model: {exc}")
+            return False
 
     def reset(self, h0: list) -> None:
-        self._reset_kf()
-        self.kf.x = np.array(h0)
-        self._wins = {s: [] for s in self.R_CALIB}
+        self._kf   = KalmanFilter(dt=self.dt)
+        self._kf.x = np.array(h0)
+        self._h    = None
+        self._k_ratio = {s: [1.0] * SENSOR_DIMS[s] for s in SENSOR_ORDER}
 
     # ── Runtime ───────────────────────────────────────────────────────────────
 
     def predict(self) -> None:
-        self.kf.predict()
+        self._kf.predict()
 
-    def update(self, sensor_name: str, z: np.ndarray) -> np.ndarray:
-        """Update with measurement z; returns the pre-update innovation."""
-        H     = self.kf.sensors[sensor_name]["H"]
-        innov = z - H @ self.kf.x
+    def update(self, sensor_name: str, z: np.ndarray) -> None:
+        H     = self._kf.sensors[sensor_name]["H"]
+        innov = z - H @ self._kf.x
 
-        win = self._wins[sensor_name]
-        win.append(innov.copy())
-        if len(win) > self.WINDOW:
-            win.pop(0)
+        if not self.trained:
+            R = self._kf.sensors[sensor_name]["R"]
+            S = H @ self._kf.P @ H.T + R
+            K = self._kf.P @ H.T @ np.linalg.inv(S)
+            self._kf.x = self._kf.x + K @ innov
+            self._kf.P = (np.eye(STATE_DIM) - K @ H) @ self._kf.P
+            return
 
-        R_eff = self._effective_R(sensor_name)
-        S = H @ self.kf.P @ H.T + R_eff
-        K = self.kf.P @ H.T @ np.linalg.inv(S)
-        self.kf.x = self.kf.x + K @ innov
-        self.kf.P = (np.eye(6) - K @ H) @ self.kf.P
-        return innov
+        # ── Build 9D innovation vector (this sensor's slot only) ──────────
+        iv9    = np.zeros(TOTAL_MEAS_DIM, dtype=np.float32)
+        offset = SENSOR_OFFSETS[sensor_name]
+        iv9[offset:offset + SENSOR_DIMS[sensor_name]] = innov.astype(np.float32)
 
-    def _effective_R(self, s: str) -> np.ndarray:
-        net   = self._nets[s]
-        calib = self.R_CALIB[s]
-        m     = self._DIMS[s]
+        # ── GRU step ──────────────────────────────────────────────────────
+        with torch.no_grad():
+            x_in       = torch.from_numpy(iv9).unsqueeze(0).unsqueeze(0)   # (1,1,9)
+            K_out, self._h = self._net(x_in, self._h)
 
-        if net is None:
-            return np.diag(calib)
+        K = K_out[sensor_name][0].numpy()          # (STATE_DIM, sensor_dim)
 
-        win    = self._wins[s]
-        padded = np.zeros((self.WINDOW, m))
-        if win:
-            padded[-len(win):] = np.array(win)
+        # ── K-ratio for display (GRU K vs Riccati K from current P) ───────
+        R_cal  = self._kf.sensors[sensor_name]["R"]
+        S_ref  = H @ self._kf.P @ H.T + R_cal
+        K_ref  = self._kf.P @ H.T @ np.linalg.inv(S_ref)
+        k_norm = np.linalg.norm(K,     axis=0) + 1e-9
+        r_norm = np.linalg.norm(K_ref, axis=0) + 1e-9
+        self._k_ratio[sensor_name] = (k_norm / r_norm).tolist()
 
-        log_r  = net.forward(padded.flatten())
-        r_diag = np.exp(log_r)
-        # Never trust a sensor more than calibrated (R floor = 80 % of calib)
-        r_diag = np.clip(r_diag, 0.8 * calib, 500.0 * calib)
-        self._r_hat[s] = r_diag.tolist()
-        return np.diag(r_diag)
+        # ── Apply GRU K ───────────────────────────────────────────────────
+        self._kf.x = self._kf.x + K @ innov
+
+        # Joseph form ensures P stays positive semi-definite with arbitrary K
+        I_KH = np.eye(STATE_DIM) - K @ H
+        self._kf.P = I_KH @ self._kf.P @ I_KH.T + K @ R_cal @ K.T
+        self._kf.P = 0.5 * (self._kf.P + self._kf.P.T)    # symmetrize
 
     def position_uncertainty(self) -> float:
-        return float(np.sqrt(self.kf.P[0, 0] + self.kf.P[1, 1] + self.kf.P[2, 2]))
-
-    # ── Training ──────────────────────────────────────────────────────────────
-
-    def train(self, buffer: list) -> None:
-        """
-        Train per-sensor MLPs from a collected trajectory buffer.
-
-        buffer items: {
-          "innovations": {sensor_name: [float, ...]},
-          "env":         {"wind_speed": float, "temperature": float}
-        }
-        """
-        for s in self.R_CALIB:
-            m    = self._DIMS[s]
-            n_in = self.WINDOW * m
-
-            xs, ys = [], []
-            for i in range(self.WINDOW, len(buffer)):
-                rows, ok = [], True
-                for j in range(i - self.WINDOW, i):
-                    row = buffer[j]["innovations"].get(s)
-                    if row is None:
-                        ok = False; break
-                    rows.append(row)
-                if not ok:
-                    continue
-
-                x_in  = np.array(rows, dtype=float).flatten()
-                r_tgt = self._oracle_R(s, buffer[i]["env"])
-                xs.append(x_in)
-                ys.append(np.log(r_tgt + 1e-9))
-
-            if len(xs) < self.BATCH:
-                continue
-
-            X = np.array(xs, dtype=float)   # (N, n_in)
-            Y = np.array(ys, dtype=float)   # (N, m)
-
-            net = _MLP(n_in, self.HIDDEN, m, seed=abs(hash(s)) % 2**31)
-            net.x_mean = X.mean(axis=0)
-            net.x_std  = X.std(axis=0) + 1e-8
-
-            N = len(X)
-            for epoch in range(self.EPOCHS):
-                t   = epoch / self.EPOCHS
-                lr  = self.LR_INIT * (1 - t) + self.LR_FINAL * t
-                idx = np.random.permutation(N)
-                for start in range(0, N, self.BATCH):
-                    b       = idx[start:start + self.BATCH]
-                    out, H_act, Xn = net.forward_batch(X[b])
-                    net.step(Xn, H_act, out, Y[b], lr)
-
-            self._nets[s] = net
-
-        self.trained = True
-
-    @staticmethod
-    def _oracle_R(sensor: str, env: dict) -> np.ndarray:
-        """
-        Ground-truth effective R given the simulation's known noise formulas.
-        Used only during training — not available at inference time.
-        """
-        w  = env.get("wind_speed",  0.0)
-        dT = env.get("temperature", 20.0) - 20.0
-        if sensor == "gps":
-            s = 2.0 + 0.12 * w
-            return np.array([s*s, s*s, s*s])
-        if sensor == "imu":
-            s = 0.5 + 0.04 * w + 0.008 * abs(dT)
-            return np.array([s*s, s*s, s*s])
-        if sensor == "baro":
-            s    = 0.5 + 0.008 * abs(dT)
-            bias = dT * 0.12
-            return np.array([s * s + bias * bias])
-        # mag: static noise in this simulation
-        return np.array([9.0, 9.0])
+        return float(np.sqrt(max(0.0, self._kf.P[0, 0] + self._kf.P[1, 1] + self._kf.P[2, 2])))

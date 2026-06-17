@@ -8,7 +8,7 @@ class KalmanFilter:
     Supports dynamic sensor activation / deactivation for redundancy demo.
     """
 
-    def __init__(self, dt: float = 0.05, process_noise: float = 0.5):
+    def __init__(self, dt: float = 0.05, process_noise: float = 1.5):
         self.dt = dt
         n = 6
 

@@ -34,7 +34,7 @@ class DroneSim:
         self.wind_speed   = 0.0   # m/s, 0–20
         self.wind_heading = 0.0   # radians
         self.temperature  = 20.0  # °C absolute; calibration point is 20°C
-        self.wind_disp    = [0.0, 0.0]  # accumulated horizontal displacement (m)
+        self.wind_disp    = [0.0, 0.0]  # accumulated horizontal drift from wind
 
         # KalmanNET training data collection
         self.collecting_data  = False
@@ -92,14 +92,12 @@ class DroneSim:
                       + np.random.normal(0, self.wind_speed * 0.1))
         else:
             gust_x, gust_y = 0.0, 0.0
-
         self.wind_disp[0] = 0.97 * self.wind_disp[0] + gust_x * self.dt * 0.08
         self.wind_disp[1] = 0.97 * self.wind_disp[1] + gust_y * self.dt * 0.08
-
         wind_vel_x = (self.wind_disp[0] - prev_disp[0]) / self.dt
         wind_vel_y = (self.wind_disp[1] - prev_disp[1]) / self.dt
 
-        # ── True state ────────────────────────────────────────────────────────
+        # ── True state (helix + wind displacement) ────────────────────────────
         helix = self._true_helix(self.t)
         truth = np.array([
             helix[0] + self.wind_disp[0],
@@ -119,15 +117,14 @@ class DroneSim:
             "mag":  [3.0, 3.0],
         }
         # Temperature-induced barometer bias: hot air = lower pressure = reads low
-        baro_bias = -dT * 0.12
+        baro_bias = -dT * 0.25
 
         # ── Generate sensor readings (shared by both filters) ─────────────────
         self.kf.predict()
         self.kn.predict()
 
-        readings     = {}
-        z_values     = {}
-        kn_pre_innov = {}   # pre-update innovations w.r.t. KN estimate
+        readings = {}
+        z_values = {}
 
         for name, failed in self.sensor_failed.items():
             if not failed:
@@ -138,10 +135,6 @@ class DroneSim:
                     z[0] += baro_bias
                 z_values[name] = z
                 readings[name] = z.tolist()
-
-                # Capture innovation before KN update
-                H = cfg["H"]
-                kn_pre_innov[name] = (z - H @ self.kn.kf.x).tolist()
             else:
                 readings[name] = None
 
@@ -151,16 +144,13 @@ class DroneSim:
             self.kn.update(name, z)
 
         est    = self.kf.x.tolist()
-        kn_est = self.kn.kf.x.tolist()
+        kn_est = self.kn._kf.x.tolist()
 
         # ── Collect training data (all sensors must be active) ────────────────
         if self.collecting_data and not any(self.sensor_failed.values()):
             self.training_buffer.append({
-                "innovations": {k: v for k, v in kn_pre_innov.items()},
-                "env": {
-                    "wind_speed":  self.wind_speed,
-                    "temperature": self.temperature,
-                },
+                "measurements": {k: v.tolist() for k, v in z_values.items()},
+                "x_true":       truth.tolist(),
             })
 
         # ── Raw position estimate ─────────────────────────────────────────────
@@ -201,7 +191,7 @@ class DroneSim:
             "kn_est":      kn_est,
             "kn_trail":    [list(p) for p in self.kn_trail[-80:]],
             "kn_error":    float(np.linalg.norm(truth[:3] - np.array(kn_est[:3]))),
-            "kn_r_hat":    {s: list(self.kn._r_hat[s]) for s in self.kn._r_hat},
+            "kn_k_ratio":  dict(self.kn._k_ratio),
             "kn_trained":  self.kn.trained,
             "error":       float(np.linalg.norm(truth[:3] - np.array(est[:3]))),
             "uncertainty": self.kf.position_uncertainty(),
