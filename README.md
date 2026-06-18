@@ -1,6 +1,6 @@
 # Kalman-NET Demo
 
-A simulation showing where classical sensor fusion breaks down in changing environments — and how Kalman-NET, a recurrent neural network, learns to compensate.
+A simulation showing where classical sensor fusion breaks down in changing environments — and how[ Kalman-NET](https://pure.tue.nl/ws/files/201346390/KalmanNet_Neural_Network_Aided_Kalman_Filtering_for_Partially_Known_Dynamics.pdf), a recurrent neural network, learns to compensate.
 
 
 
