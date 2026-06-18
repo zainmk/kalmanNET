@@ -71,8 +71,6 @@ Training (BPTT):
 3. Backprop through time: gradient flows from loss through K → GRU → hidden state chain
 4. Truncated BPTT: process in 100-step chunks, detach h and x̂ at boundaries (prevents exploding gradients)
 
-"1-2 days" referred to the training loop needing to exactly mirror inference (same sensor ordering, same sequential x̂ propagation), plus hyperparameter tuning. With the architecture now confirmed, actual implementation is ~30 lines of training logic.
-
 Training time for this demo: ~15-30 seconds on CPU.
 
 ---
@@ -135,18 +133,11 @@ Three questions asked: separate script or inline? Which K display? Restore wind 
 - `static/app.js` — `renderKratio` replaces `renderRhat`, ↑/↓/~ arrows
 - `static/index.html` — "K-GAIN RATIO (vs standard KF)"
 - `requirements.txt` — added `torch>=2.0`, installed into venv
-- `design_decisions.md` — created, full conversation history of decisions + tradeoffs
 - `CLAUDE.md` — created, architecture guide for future Claude sessions
 
 ---
 
-## Session 2
-
-**User:** Why create a CLAUDE.md?
-
-**Claude:** You asked for it. General purpose: CLAUDE.md loads automatically at the start of every Claude Code session in this directory. Without it, each new session must re-derive the thread model, lock discipline, SSE key contracts, and noise formula duplication by reading multiple files. With it, that context is available immediately.
-
----
+## Session 2 — Training pipeline & chat log
 
 **User:** The last message I sent was 'separate script, option A for K matrix structure, use the ratio display, restore wind displacement now' — invoke the plan with the decisions made. Make a separate file to note all the design decisions made, especially the switch from R prediction to full GRU, just list the chat history and the explanations made including tradeoffs for real deployment.
 
@@ -166,12 +157,6 @@ Workflow:
 
 ---
 
-**User:** Do I have to run `train_kalmannet_gru.py` locally — or is that process automated?
-
-**Claude:** Fully automated. Clicking TRAIN KALMANNET in the browser runs the entire pipeline: calibration flight → save buffer → subprocess runs training script → model saved → loaded live → ACTIVE dot. You never need to touch the terminal. The script file exists only so you *can* run it manually to re-train with different hyperparameters.
-
----
-
 **User:** Keep a log of our chat history — only in text in a file called 'CLAUDE_CHAT_LOG', keep a copy of our conversation and add to it every time we speak.
 
 **Claude:** Created this file. Will append to it at the start of each future session.
@@ -182,15 +167,13 @@ Workflow:
 
 **User:** Add a progress bar so the user has an estimate of how much longer is left.
 
-**Claude:** Plan: switch `subprocess.run` to `subprocess.Popen`, read stdout line by line, parse "Epoch X/200" to update `_training_state["progress"]` from 0.9 → 0.99 during the OPTIMISING phase. Progress bar element added to the KN panel in HTML, styled in CSS, animated in JS. Interrupted before completion by a runtime error (see below).
+**Claude:** Switched `subprocess.run` to `subprocess.Popen`, read stdout line by line, parsed "Epoch X/200" to update `_training_state["progress"]` from 0.9 → 0.99 during the OPTIMISING phase. Progress bar element added to the KN panel in HTML, styled in CSS, animated in JS.
 
 ---
 
 **User:** `kalmannet.py:114: RuntimeWarning: overflow encountered in cast` when running 'play' after training.
 
 **Claude:** Root cause: the GRU outputs a dense K matrix (all 18 elements ≈ 0.95–2.0). Off-diagonal K values cause (I − K@H) to have eigenvalues of −1.85, so the covariance matrix P grows 3.42× every step. After ~100 steps the state x diverges and the innovation overflows float32.
-
-Absolute clip (K ≤ 0.95) doesn't fix it — a 3×3 block of all-0.95 still has eigenvalue 2.85.
 
 Fix: `K = np.clip(K, 0.0, np.abs(K_ref) * 2 + 1e-6)` — clips relative to the Riccati K. The Riccati K has near-zero off-diagonal elements, so the clip zeroes out the GRU's off-diagonal output and preserves filter stability. Added `np.clip(innov, -1e4, 1e4).astype(np.float32)` to silence the overflow warning, plus a safety reset if `|x| > 1e5`.
 
@@ -210,43 +193,35 @@ Fix: `K = np.clip(K, 0.0, np.abs(K_ref) * 2 + 1e-6)` — clips relative to the R
 
 2. **Visibility toggle** in `applyState`: when KN trained — cyan `knDrone` at KN estimate, translucent `kfSilhouette` at KF estimate, white `kfDrone` hidden. When untrained — white `kfDrone` at KF estimate, others hidden.
 
-3. **Flash banner**: `#drone-mode-flash` div with CSS keyframe animation (2.4s fade in/hold/out). Shows "DRONE ● KALMANNET" in cyan or "DRONE ● KALMAN FILTER" in blue on every mode change. Legend updates dynamically: est. drone dot color + label change, KF silhouette row appears/disappears.
+3. **Flash banner**: `#drone-mode-flash` div with CSS keyframe animation (2.4s fade in/hold/out). Shows "DRONE ● KALMAN-NET" in cyan or "DRONE ● KALMAN FILTER" in blue on every mode change. Legend updates dynamically: est. drone dot color + label change, KF silhouette row appears/disappears.
 
 ---
 
-## Session 4 — Deployment planning, subprocess → in-process training
+## Session 4 — Deployment planning, subprocess → in-process training, UI polish
 
 **User:** Put the 'KalmanNET' next to the other lines of reference in the legend.
 
-**Claude:** Moved `#legend-kn` in `index.html` to sit immediately after Kalman (True / Raw / Kalman / KalmanNET), before the dot entries (True drone / Est. drone / GPS / IMU / Baro / Mag / Unc.). KF silhouette entry placed after Est. drone.
+**Claude:** Moved `#legend-kn` in `index.html` to sit immediately after Kalman (True / Raw / Kalman / Kalman-NET), before the dot entries (True drone / Est. drone / GPS / IMU / Baro / Mag / Unc.). KF silhouette entry placed after Est. drone.
 
 ---
 
 **User:** If I wish to deploy this application — what would be the best way? Render or Vercel? (no code changes — simply plan how to deploy)
 
-**Claude:** Render. Vercel is architecturally incompatible — its serverless functions are stateless, short-lived, and Lambda-backed. The app requires persistent background threads (`_sim_loop`), long-lived SSE connections, a ~30s subprocess call, in-memory shared state, and PyTorch (~2 GB), all of which hit hard Vercel limits.
+**Claude:** Render. Vercel is architecturally incompatible — its serverless functions are stateless, short-lived, and Lambda-backed. The app requires persistent background threads (`_sim_loop`), long-lived SSE connections, a ~30s training call, in-memory shared state, and PyTorch (~200 MB), all of which hit hard Vercel limits.
 
-Render plan: Web Service (not Static Site), Standard tier ($25/mo, 2 GB RAM), start command `gunicorn app:app -w 1 --threads 8 -t 300`, CPU-only PyTorch wheel in requirements.txt (`--index-url https://download.pytorch.org/whl/cpu`), `--workers 1` mandatory (all sim state is in-process globals), Render Disk add-on for model persistence or accept ephemeral model on redeploy.
+Render plan: Web Service, start command `gunicorn app:app -w 1 --threads 8 -t 300`, CPU-only PyTorch wheel, `--workers 1` mandatory (all sim state is in-process globals).
 
 ---
 
 **User:** Would I have to pay for their tier? Why — is there a way to limit the size so I can manage on the free tier?
 
-**Claude:** The spike is specifically the subprocess model: during training, both the Flask parent process and the training subprocess each load PyTorch independently (~230 MB each), hitting ~460 MB simultaneously — over the 512 MB free tier limit.
-
-At idle (inference only) the app fits comfortably in 512 MB. The free tier is viable if training is removed from the deployed version. Cleanest path: commit `kalmannet_model.pt`, implement numpy-only GRU inference (extracting weights from the `.pt` file), drop torch from the deployed requirements. Runtime drops to ~90 MB. Training remains a local workflow (already the practical reality). One downside: users of the deployed version can't trigger training.
+**Claude:** The spike is specifically the subprocess model: during training, both the Flask parent process and the training subprocess each load PyTorch independently (~230 MB each), peaking at ~460 MB — over the 512 MB free tier limit. At idle the app fits in 512 MB comfortably. Solution: switch from subprocess to in-process thread, which keeps a single PyTorch instance (~360 MB peak), fitting the free tier with headroom.
 
 ---
 
 **User:** Further explain this design decision — the need and solution, in terms of subprocess vs. in-process. Do I lose any training accuracy?
 
-**Claude:** The GIL concern that motivated subprocess doesn't apply to PyTorch. Python's GIL prevents multiple threads from executing Python bytecode simultaneously, but PyTorch releases the GIL during its C++ compute kernels — matrix multiplies, GRU forward/backward — so other Flask threads stay responsive regardless. The sim is already paused during the optimising phase, so there is nothing that needs to run concurrently.
-
-The actual cost of subprocess: (1) dual PyTorch instances → ~460 MB peak, (2) no real-time progress — `capture_output=True` buffers all stdout until the process exits, so the progress bar would need stdout parsing workarounds.
-
-In-process thread: single PyTorch instance (~360 MB peak), direct `_training_state["progress"]` writes each epoch → smooth real-time progress bar for free.
-
-No accuracy loss. Training accuracy depends entirely on the data, model architecture, loss function, and hyperparameters — none of which change between subprocess and thread execution environments. The only numerical difference is random seed, which is statistically irrelevant.
+**Claude:** Python's GIL doesn't apply to PyTorch — it releases the GIL during C++ compute kernels (matrix multiplies, GRU forward/backward), so other Flask threads stay responsive regardless. Subprocess costs: dual PyTorch instances → ~460 MB peak; no real-time progress (stdout buffered until exit). In-process thread: single PyTorch instance (~360 MB), direct `_training_state["progress"]` writes each epoch → smooth live progress bar. No accuracy loss — training accuracy depends on data, architecture, loss, and hyperparameters, none of which change between execution environments.
 
 ---
 
@@ -254,10 +229,50 @@ No accuracy loss. Training accuracy depends entirely on the data, model architec
 
 **Claude:** Implemented:
 - `train_kalmannet_gru.py`: extracted training loop into `train_from_buffer(buffer, progress_cb=None)`. `main()` is now a thin wrapper so `python train_kalmannet_gru.py` still works locally.
-- `app.py`: removed `import subprocess` and `import sys`. Added `from train_kalmannet_gru import train_from_buffer`. Replaced `subprocess.run(...)` block with a direct call inside `_run_training`. Added `_progress_cb(epoch, epochs, rms)` closure that writes `progress = 0.90 + 0.09 * (epoch / epochs)` to `_training_state` each epoch — progress bar now animates from 90% → 99% in real time.
+- `app.py`: removed `import subprocess`. Added `from train_kalmannet_gru import train_from_buffer`. Replaced subprocess block with direct call inside `_run_training`. Added `_progress_cb` closure that writes `progress = 0.90 + 0.09 * (epoch / epochs)` to `_training_state` each epoch.
 
 ---
 
-**User:** Update the CLAUDE_CHAT_LOG on the conclusion of every message between us, so it's more up to date and live.
+**User:** Rename the UI instances of kalmannet to kalman-net (so the net is more pronounced and easier to read).
 
-**Claude:** Appended Sessions 3 and 4 to bring the log current. Updated the memory rule from "end of session" to "after every response." The log will be updated as the last action of each reply going forward.
+**Claude:** Updated all visible labels in `index.html`, `app.js`, and `tooltips.js`: "KALMANNET" → "KALMAN-NET", "KalmanNET" → "Kalman-NET". Flash banner, button label, legend entry, badge text, and tooltip headings all updated.
+
+---
+
+**User:** When I hit the sensor buttons when the sim is paused — they do not respond (to toggling on/off in the UI side).
+
+**Claude:** Root cause: the SSE stream sends frozen state when paused, so `applyState` never fires with the new sensor state. Fix: `toggleSensor()` in `app.js` now reads the POST `/toggle` response directly and updates button classes and the status badge immediately from `data.failed`, bypassing the SSE stream entirely for UI state.
+
+---
+
+**User:** Update the README to consist of explaining the updated implementation, update the tooltips as well with any relevant information they represent — ensure everything is accurate.
+
+**Claude:** Full README rewrite (plain-English KF/KN explanation, running instructions, architecture, limitations) and full tooltip rewrite in `tooltips.js` with corrected numbers (baro coefficient −0.25·ΔT, GRU predicts K directly not R, GPS K increases for wind). Added two sections: "AI and the path to realistic simulation" (domain randomization, neural digital twins, online adaptation) and "Software design for a hosted demo" (model size, vectorised training, Flask SSE, in-process thread, CPU-only PyTorch).
+
+---
+
+## Session 5 — Render free tier deployment
+
+**User:** What would it take to deploy this application to Render on the free tier?
+
+**Claude:** Three changes: `render.yaml` (free plan, CPU-only torch build command, gunicorn start command with `--threads 8 -t 300`), `requirements.txt` (remove torch, add gunicorn — torch installed separately to avoid 2.5 GB CUDA wheel), `app.py` (bind to `$PORT` env var). SSE reconnect on spin-down was already in place.
+
+---
+
+**User:** Getting `ImportError: PyTorch is required` during deployment.
+
+**Claude:** Render defaulted to Python 3.14, which has no PyTorch wheels. `render.yaml` was also being ignored because the service was created via the dashboard UI (not as a Blueprint). Created `runtime.txt` and `.python-version` pinning to Python 3.11.9, and added torch back to `requirements.txt` as a direct CPU wheel URL (`torch-2.5.1+cpu-cp311-cp311-linux_x86_64.whl`) so the default `pip install -r requirements.txt` installs it without a custom build command.
+
+---
+
+**User:** App is deployed but clicking any button causes it to hang.
+
+**Claude:** Root cause: Render's dashboard is running the default `gunicorn app:app` — sync workers, no threading. With sync workers, the SSE `/stream` endpoint (a persistent connection that never ends) permanently occupies the one worker. Every button click (POST to `/train`, `/toggle`, `/pause`) queues behind it and waits indefinitely. Fix: change the Start Command in the Render dashboard to `gunicorn app:app -w 1 --threads 8 -t 300 -b 0.0.0.0:$PORT`. This is what `render.yaml` specifies but the dashboard overrides it.
+
+Vercel is not a viable alternative — serverless functions are stateless and time-limited (10s free tier), incompatible with persistent SSE streams, background sim threads, and a ~60s training call.
+
+---
+
+**User:** Fix the Render start command.
+
+**Claude:** Created a `Procfile` (which overrides the dashboard start command for UI-created Render services) — then user redirected to use dashboard instructions instead of adding a new file. Dashboard fix: Settings → Start Command → `gunicorn app:app -w 1 --threads 8 -t 300 -b 0.0.0.0:$PORT` → Save → Manual Deploy.
