@@ -1,7 +1,10 @@
-# Kalman-NET Demo
+# KalmanNET
 
-A simulation showing where classical sensor fusion breaks down in changing environments — and how Kalman-NET, a recurrent neural network, learns to compensate.
+A simulation showing where classical sensor fusion breaks down in changing environments — and how[ Kalman-NET](https://pure.tue.nl/ws/files/201346390/KalmanNet_Neural_Network_Aided_Kalman_Filtering_for_Partially_Known_Dynamics.pdf), a recurrent neural network, learns to compensate.
 
+
+
+https://github.com/user-attachments/assets/6e2a2b0b-b7e2-479f-b9fd-45d4e3c08ee4
 
 
 ---
@@ -78,26 +81,6 @@ The simulation runs at 20 Hz in a background thread. State is pushed to the brow
 **GRU:** shared network (input = 9 combined innovations, hidden = 64) + four per-sensor linear heads. Outputs K ∈ (0, 2) per element via 2·sigmoid. One GRU call per filter step processes all sensors together. K is clipped element-wise to `[0, 2 × |K_Riccati|]` to preserve filter stability.
 
 **Training:** teacher-forced, fully vectorised. ~5 800 raw steps subsampled 10× → 580 GRU steps. Loss = Σ ‖x̂_t[:3] − x_true_t[:3]‖². Adam + cosine LR (1e-3 → 1e-4), 200 epochs, ~32 s on CPU.
-
----
-
-## Design decisions
-
-### Why a GRU predicting K directly
-
-An earlier version predicted R per-sensor using an MLP. Two problems motivated the switch:
-
-**K can go in either direction.** R-inflation reduces K — the filter trusts the sensor less. Wind displacement requires the filter to trust GPS *more* to track the displaced true position. This is impossible with R-inflation alone. Direct-K prediction has no such constraint.
-
-**Temporal context is load-bearing.** An MLP operating on a fixed-size innovation window cannot reliably distinguish transient noise spikes from sustained environmental drift. The GRU carries hidden state across the full flight, allowing it to recognise that GPS and IMU innovations growing *together* over many steps means wind — not simultaneous sensor failure — and respond with a sustained K adjustment.
-
-### Why in-process training, not a subprocess
-
-Training runs in the `_run_training` daemon thread rather than a child process. PyTorch releases the GIL during its C++ compute operations, so Flask's SSE stream and route handlers remain responsive throughout. The simulation is already paused during the optimisation phase, so there is no competing compute load. A subprocess would instantiate two independent Python runtimes, each loading the full PyTorch library (~230 MB), doubling peak memory during training. The in-process approach also enables real-time epoch progress updates via direct state mutation — no stdout parsing needed.
-
-### Why simulation-based calibration training
-
-The network trains on a scripted flight that covers the full operating envelope in controlled conditions. This mirrors a real KalmanNET deployment: a calibration flight is performed where ground truth is available (differential GPS, motion capture), the network trains on that data, and inference runs on subsequent operational flights without ground truth. In this simulation ground truth is always available (the analytical helix), so the calibration flight is free.
 
 ---
 
