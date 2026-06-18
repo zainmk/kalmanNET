@@ -2,7 +2,7 @@
 
 A simulation showing where classical sensor fusion breaks down in changing environments — and how Kalman-NET, a recurrent neural network, learns to compensate.
 
-<video src="screenrecording.mp4" width="100%" controls></video>
+![Demo](screenrecording.mp4)
 
 ---
 
