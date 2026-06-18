@@ -19,6 +19,7 @@
 
 <div class="main">
   <canvas id="canvas"></canvas>
+  <div id="drone-mode-flash" class="drone-mode-flash kf"></div>
 
   <!-- Environment overlay -->
   <div class="env-overlay">
@@ -128,12 +129,6 @@
       </div>
     </div>
 
-    <!-- Error chart -->
-    <div class="panel">
-      <div class="panel-title" id="panel-error-title" data-tooltip="">Position Error over Time</div>
-      <canvas id="err-chart"></canvas>
-    </div>
-
     <!-- KalmanNET panel -->
     <div class="panel" id="panel-kn">
       <div class="panel-title">KalmanNET</div>
@@ -145,6 +140,7 @@
         <div class="kn-bar-wrap"><div class="kn-bar-fill" id="kn-bar-fill"></div></div>
         <div class="kn-phase-list" id="kn-phase-list"></div>
       </div>
+      <button class="kn-clear-btn" id="btn-clear" onclick="clearModel()" style="display:none">&#10005; &nbsp;CLEAR MODEL</button>
       <button class="kn-train-btn" id="btn-train" onclick="startTraining()">&#9654; &nbsp;TRAIN KALMANNET</button>
       <div class="kn-rhat" id="kn-rhat" style="display:none">
         <div class="kn-rhat-title">K-GAIN RATIO &nbsp;<span class="kn-rhat-sub">(vs standard KF)</span></div>
@@ -160,14 +156,15 @@
       <div class="overlay-legend-row" id="legend-true"       data-tooltip=""><div class="leg-line" style="background:#00ff44"></div>True</div>
       <div class="overlay-legend-row" id="legend-raw"        data-tooltip=""><div class="leg-line" style="background:#ff3300"></div>Raw</div>
       <div class="overlay-legend-row" id="legend-kalman"     data-tooltip=""><div class="leg-line" style="background:#00aaff"></div>Kalman</div>
+      <div class="overlay-legend-row" id="legend-kn"         data-tooltip=""><div class="leg-line" style="background:#00ccbb"></div>KalmanNET</div>
       <div class="overlay-legend-row" id="legend-true-drone" data-tooltip=""><div class="leg-dot"  style="background:#00ff44"></div>True drone</div>
       <div class="overlay-legend-row" id="legend-est-drone"  data-tooltip=""><div class="leg-dot"  style="background:#ffffff"></div>Est. drone</div>
+      <div class="overlay-legend-row" id="legend-kf-sil"    style="display:none"><div class="leg-dot" style="background:#1155cc;opacity:0.6"></div>KF silhouette</div>
       <div class="overlay-legend-row" id="legend-gps"        data-tooltip=""><div class="leg-dot"  style="background:#ffdd00"></div>GPS</div>
       <div class="overlay-legend-row" id="legend-imu"        data-tooltip=""><div class="leg-dot"  style="background:#ff8800"></div>IMU</div>
       <div class="overlay-legend-row" id="legend-baro"       data-tooltip=""><div class="leg-dot"  style="background:#ff44aa"></div>Baro</div>
       <div class="overlay-legend-row" id="legend-mag"        data-tooltip=""><div class="leg-dot"  style="background:#bb44ff"></div>Mag</div>
       <div class="overlay-legend-row" id="legend-unc"        data-tooltip=""><div class="leg-dot"  style="background:#0055ff; opacity:0.5"></div>Unc.</div>
-      <div class="overlay-legend-row" id="legend-kn"         data-tooltip=""><div class="leg-line" style="background:#00ccbb"></div>KalmanNET</div>
     </div>
   </div>
 

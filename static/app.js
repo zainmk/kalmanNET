@@ -55,21 +55,29 @@ scene.add(blueLight);
 scene.add(new THREE.GridHelper(140, 28, 0x0e1f66, 0x080f33));
 
 // ── Drone factory ─────────────────────────────────────────────────────────────
-function makeDrone(ghost) {
+// style: 'kf' (white solid), 'kn' (cyan solid), 'true' (green wireframe),
+//        'kf-silhouette' (translucent blue solid)
+function makeDrone(style) {
   const g = new THREE.Group();
+  const wireframe = style === 'true';
+  const translucent = style === 'kf-silhouette';
+
+  const bodyColor = { kf: 0xffffff, kn: 0x00ccbb, true: 0x00ee66, 'kf-silhouette': 0x1155cc }[style];
+  const rotorColor = { kf: 0x44aaff, kn: 0x009988, true: 0x00ee66, 'kf-silhouette': 0x1155cc }[style];
+  const bodyOpacity = translucent ? 0.30 : (wireframe ? 0.28 : 1);
+  const rotorOpacity = translucent ? 0.18 : (wireframe ? 0.18 : 0.82);
 
   function mat(color, opacity) {
-    return new THREE.MeshPhongMaterial({ color, transparent: opacity < 1, opacity, wireframe: ghost });
+    return new THREE.MeshPhongMaterial({ color, transparent: opacity < 1, opacity, wireframe });
   }
 
-  const bodyMat = mat(ghost ? 0x00ee66 : 0xffffff, ghost ? 0.28 : 1);
+  const bodyMat = mat(bodyColor, bodyOpacity);
   g.add(new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.55, 2.2), bodyMat));
   g.add(new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.22, 0.38), bodyMat.clone()));
   g.add(new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.22, 7.6), bodyMat.clone()));
 
   const rotMat = new THREE.MeshPhongMaterial({
-    color: ghost ? 0x00ee66 : 0x44aaff,
-    transparent: true, opacity: ghost ? 0.18 : 0.82,
+    color: rotorColor, transparent: true, opacity: rotorOpacity, wireframe,
   });
   const rotors = [];
   [[3.8, 0.32, 0], [-3.8, 0.32, 0], [0, 0.32, 3.8], [0, 0.32, -3.8]].forEach(([x, y, z]) => {
@@ -79,14 +87,17 @@ function makeDrone(ghost) {
     rotors.push(r);
   });
 
-  if (!ghost) {
-    [[3.8, 0.42, 0, 0xff2200], [-3.8, 0.42, 0, 0xff2200],
-     [0, 0.42, 3.8, 0x00ff44], [0, 0.42, -3.8, 0x00ff44]].forEach(([x, y, z, c]) => {
+  if (style === 'kf' || style === 'kn') {
+    const ledA = style === 'kn' ? 0x00ffee : 0xff2200;
+    const ledB = style === 'kn' ? 0x00ffee : 0x00ff44;
+    [[3.8, 0.42, 0, ledA], [-3.8, 0.42, 0, ledA],
+     [0, 0.42, 3.8, ledB], [0, 0.42, -3.8, ledB]].forEach(([x, y, z, c]) => {
       const led = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), new THREE.MeshBasicMaterial({ color: c }));
       led.position.set(x, y, z);
       g.add(led);
     });
-    const gimbal = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 12), new THREE.MeshPhongMaterial({ color: 0x222222 }));
+    const gimbal = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 12),
+      new THREE.MeshPhongMaterial({ color: style === 'kn' ? 0x003333 : 0x222222 }));
     gimbal.position.set(0, -0.45, 0);
     g.add(gimbal);
   }
@@ -95,15 +106,31 @@ function makeDrone(ghost) {
   return g;
 }
 
-const drone = makeDrone(false);
-const ghost  = makeDrone(true);
-ghost.scale.setScalar(0.9);
-scene.add(drone);
-scene.add(ghost);
+// kfDrone  — white solid, follows KF estimate (active when KN untrained)
+// knDrone  — cyan solid, follows KN estimate (active when KN trained)
+// kfSilhouette — translucent blue, follows KF estimate (visible alongside knDrone)
+// trueDrone — green wireframe, always follows true position
+const kfDrone      = makeDrone('kf');
+const knDrone      = makeDrone('kn');
+const kfSilhouette = makeDrone('kf-silhouette');
+const trueDrone    = makeDrone('true');
+// legacy alias used in animation loop
+const drone = kfDrone;
+const ghost = trueDrone;
+
+trueDrone.scale.setScalar(0.9);
+kfSilhouette.scale.setScalar(0.92);
+
+scene.add(kfDrone);
+scene.add(knDrone);
+scene.add(kfSilhouette);
+scene.add(trueDrone);
+
+knDrone.visible      = false;
+kfSilhouette.visible = false;
 
 // Helix t=0: x=RADIUS·cos(0)=20, y=RADIUS·sin(0)=0, z=0 → s2t = (20, 0, 0)
-drone.position.set(20, 0, 0);
-ghost.position.set(20, 0, 0);
+[kfDrone, knDrone, kfSilhouette, trueDrone].forEach(d => d.position.set(20, 0, 0));
 
 // Error line between true and estimated position
 const errLineGeo = new THREE.BufferGeometry();
@@ -172,57 +199,6 @@ scene.add(baroRing);
 const imuArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 5, 0xff8800, 1.1, 0.65);
 scene.add(imuArrow);
 
-// ── Error chart ───────────────────────────────────────────────────────────────
-const errCanvas    = document.getElementById('err-chart');
-const errCtx       = errCanvas.getContext('2d');
-const errHistory   = [];
-const errHistoryKN = [];
-const MAX_ERR      = 200;
-
-function drawErrChart() {
-  const w = errCanvas.clientWidth || 240;
-  const h = errCanvas.clientHeight || 64;
-  if (errCanvas.width !== w)  errCanvas.width  = w;
-  if (errCanvas.height !== h) errCanvas.height = h;
-  errCtx.clearRect(0, 0, w, h);
-  if (errHistory.length < 2) return;
-
-  const allVals = errHistoryKN.length > 1
-    ? [...errHistory, ...errHistoryKN]
-    : errHistory;
-  const peak = Math.max(10, ...allVals) * 1.15;
-
-  // Grid lines
-  errCtx.strokeStyle = '#0c1433';
-  errCtx.lineWidth = 1;
-  [5, 10, 15, 20].forEach(v => {
-    const y = h - (v / peak) * h;
-    if (y > 0 && y < h) { errCtx.beginPath(); errCtx.moveTo(0, y); errCtx.lineTo(w, y); errCtx.stroke(); }
-  });
-
-  function drawLine(history, color) {
-    if (history.length < 2) return;
-    errCtx.beginPath();
-    history.forEach((val, i) => {
-      const x = (i / (MAX_ERR - 1)) * w;
-      const y = h - (val / peak) * h;
-      i === 0 ? errCtx.moveTo(x, y) : errCtx.lineTo(x, y);
-    });
-    errCtx.strokeStyle = color;
-    errCtx.lineWidth = 1.5;
-    errCtx.stroke();
-  }
-
-  const maxErr = Math.max(...errHistory);
-  const kfColor = maxErr > 10 ? '#ff4422' : maxErr > 4 ? '#ffaa22' : '#00ee66';
-  drawLine(errHistory,   kfColor);
-  drawLine(errHistoryKN, '#00ccbb');
-
-  errCtx.strokeStyle = '#0e1840';
-  errCtx.lineWidth = 1;
-  errCtx.beginPath(); errCtx.moveTo(0, h - 0.5); errCtx.lineTo(w, h - 0.5); errCtx.stroke();
-}
-
 // ── Badge tooltip — dynamic based on current sensor failures ─────────────────
 function buildBadgeTooltip(failed) {
   if (!failed.gps && !failed.imu && !failed.baro && !failed.mag) {
@@ -275,23 +251,72 @@ function setSR(base, rawVal, kfVal, knVal, d) {
   }
 }
 
-let latestState = null;
+let latestState  = null;
+let prevKNTrained = false;
+
+// ── Drone mode flash banner ────────────────────────────────────────────────────
+function flashDroneMode(isKN) {
+  const el = document.getElementById('drone-mode-flash');
+  el.className = '';
+  void el.offsetWidth; // force reflow to restart animation
+  el.textContent = isKN ? 'DRONE  ●  KALMANNET' : 'DRONE  ●  KALMAN FILTER';
+  el.className   = 'drone-mode-flash ' + (isKN ? 'kn' : 'kf') + ' visible';
+}
+
+// Update the bottom legend to reflect which drone is the "estimate" drone
+function updateLegendForMode(isKN) {
+  const estRow = document.getElementById('legend-est-drone');
+  estRow.querySelector('.leg-dot').style.background = isKN ? '#00ccbb' : '#ffffff';
+  // lastChild is the plain text node "Est. drone" / "KN drone"
+  const txt = estRow.lastChild;
+  if (txt && txt.nodeType === Node.TEXT_NODE) txt.nodeValue = isKN ? 'KN drone' : 'Est. drone';
+
+  const silRow = document.getElementById('legend-kf-sil');
+  if (silRow) silRow.style.display = isKN ? '' : 'none';
+}
 
 function applyState(s) {
   latestState = s;
 
   const [ex, ey, ez] = s2t(s.est);
   const [tx, ty, tz] = s2t(s.true);
+  const knActive     = !!(s.kn_trained && s.kn_est);
 
-  drone.position.set(ex, ey, ez);
-  ghost.position.set(tx, ty, tz);
+  // ── Drone visibility & position ──────────────────────────────────────────────
+  if (knActive) {
+    const [kx, ky, kz] = s2t(s.kn_est);
+    knDrone.position.set(kx, ky, kz);
+    kfSilhouette.position.set(ex, ey, ez);
+    kfDrone.visible      = false;
+    knDrone.visible      = true;
+    kfSilhouette.visible = true;
 
-  errLinePos[0] = ex; errLinePos[1] = ey; errLinePos[2] = ez;
-  errLinePos[3] = tx; errLinePos[4] = ty; errLinePos[5] = tz;
+    errLinePos[0] = kx; errLinePos[1] = ky; errLinePos[2] = kz;
+    errLinePos[3] = tx; errLinePos[4] = ty; errLinePos[5] = tz;
+    uncSphere.position.set(kx, ky, kz);
+    controls.target.y += (ky - 8 - controls.target.y) * 0.008;
+  } else {
+    kfDrone.position.set(ex, ey, ez);
+    kfDrone.visible      = true;
+    knDrone.visible      = false;
+    kfSilhouette.visible = false;
+
+    errLinePos[0] = ex; errLinePos[1] = ey; errLinePos[2] = ez;
+    errLinePos[3] = tx; errLinePos[4] = ty; errLinePos[5] = tz;
+    uncSphere.position.set(ex, ey, ez);
+    controls.target.y += (ey - 8 - controls.target.y) * 0.008;
+  }
+
+  trueDrone.position.set(tx, ty, tz);
   errLineGeo.attributes.position.needsUpdate = true;
-
-  uncSphere.position.set(ex, ey, ez);
   uncSphere.scale.setScalar(Math.max(0.4, s.uncertainty));
+
+  // Flash + legend update on mode change
+  if (knActive !== prevKNTrained) {
+    prevKNTrained = knActive;
+    flashDroneMode(knActive);
+    updateLegendForMode(knActive);
+  }
 
   updateTrail(trueTrail, s.true_trail);
   updateTrail(estTrail,  s.est_trail);
@@ -307,9 +332,12 @@ function applyState(s) {
     gpsDot.visible = false;
   }
 
+  // Sensor visualisers anchor to whichever drone is currently active
+  const [ax, ay, az] = knActive ? s2t(s.kn_est) : [ex, ey, ez];
+
   if (r.baro) {
-    baroDot.position.set(ex, r.baro[0], ez);
-    baroRing.position.set(ex, r.baro[0], ez);
+    baroDot.position.set(ax, r.baro[0], az);
+    baroRing.position.set(ax, r.baro[0], az);
     baroDot.visible = true;
     baroRing.visible = true;
   } else {
@@ -318,7 +346,7 @@ function applyState(s) {
   }
 
   if (r.mag) {
-    magDot.position.set(r.mag[0], ey, r.mag[1]);
+    magDot.position.set(r.mag[0], ay, r.mag[1]);
     magDot.visible = true;
   } else {
     magDot.visible = false;
@@ -330,7 +358,7 @@ function applyState(s) {
     if (speed > 0.05) {
       imuArrow.setDirection(vel.normalize());
       imuArrow.setLength(Math.min(speed * 1.6, 10), 1.1, 0.65);
-      imuArrow.position.set(ex, ey, ez);
+      imuArrow.position.set(ax, ay, az);
       imuArrow.visible = true;
     }
   } else {
@@ -366,17 +394,7 @@ function applyState(s) {
   }
   badge.dataset.tooltip = buildBadgeTooltip(s.failed);
 
-  if (!simPaused) {
-    errHistory.push(s.error);
-    if (errHistory.length > MAX_ERR) errHistory.shift();
-    if (s.kn_trained) {
-      errHistoryKN.push(s.kn_error);
-      if (errHistoryKN.length > MAX_ERR) errHistoryKN.shift();
-    }
-    drawErrChart();
-  }
-
-  // KN R̂ display + training lock
+  // KN K-ratio display + training lock
   updateKNPanel(s);
 
   // Sync play button if backend paused state differs (e.g. after training auto-reset)
@@ -387,7 +405,6 @@ function applyState(s) {
     btn.classList.toggle('playing', !simPaused);
   }
 
-  controls.target.y += (ey - 8 - controls.target.y) * 0.008;
 }
 
 // ── KalmanNET panel ───────────────────────────────────────────────────────────
@@ -428,6 +445,7 @@ const _LOCK_IDS = [
   'btn-play-pause', 'btn-reset-header',
   'env-wind-speed', 'env-wind-heading', 'env-temp', 'env-reset-btn',
   'btn-gps', 'btn-imu', 'btn-baro', 'btn-mag',
+  'btn-clear',
 ];
 
 function setTrainingLock(locked) {
@@ -439,12 +457,13 @@ function setTrainingLock(locked) {
 }
 
 function updateKNPanel(s) {
-  const dot    = document.getElementById('kn-status-dot');
-  const label  = document.getElementById('kn-status-label');
-  const info   = document.getElementById('kn-training-info');
-  const btn    = document.getElementById('btn-train');
-  const rhat   = document.getElementById('kn-rhat');
-  const t      = s.training || {};
+  const dot      = document.getElementById('kn-status-dot');
+  const label    = document.getElementById('kn-status-label');
+  const info     = document.getElementById('kn-training-info');
+  const btn      = document.getElementById('btn-train');
+  const clearBtn = document.getElementById('btn-clear');
+  const rhat     = document.getElementById('kn-rhat');
+  const t        = s.training || {};
 
   if (t.active) {
     setTrainingLock(true);
@@ -453,10 +472,9 @@ function updateKNPanel(s) {
     info.style.display = '';
     document.getElementById('kn-bar-fill').style.width = ((t.progress || 0) * 100).toFixed(1) + '%';
     renderPhaseList(t.phase_idx ?? 0, t.step);
-    btn.disabled = true;
-    btn.textContent = '⏳ TRAINING…';
+    btn.style.display      = 'none';
+    clearBtn.style.display = 'none';
     rhat.style.display = 'none';
-    // Animate env sliders to show current training condition
     if (t.wind !== undefined) {
       document.getElementById('env-wind-speed').value = t.wind;
       document.getElementById('env-wind-speed-val').textContent = t.wind.toFixed(1) + ' m/s';
@@ -470,8 +488,9 @@ function updateKNPanel(s) {
     dot.className   = 'kn-status-dot active';
     label.textContent = 'ACTIVE';
     info.style.display = 'none';
-    btn.disabled = false;
-    btn.innerHTML = '&#8635; &nbsp;RETRAIN';
+    clearBtn.style.display = '';
+    clearBtn.disabled      = false;
+    btn.style.display      = 'none';
     rhat.style.display = '';
     renderKratio(s.kn_k_ratio || {});
   } else {
@@ -479,7 +498,9 @@ function updateKNPanel(s) {
     dot.className   = 'kn-status-dot';
     label.textContent = 'UNTRAINED';
     info.style.display = 'none';
-    btn.disabled = false;
+    clearBtn.style.display = 'none';
+    btn.style.display      = '';
+    btn.disabled           = false;
     btn.innerHTML = '&#9654; &nbsp;TRAIN KALMANNET';
     rhat.style.display = 'none';
   }
@@ -504,6 +525,10 @@ function renderKratio(kratio) {
            `<span class="rhat-val ${cls}">${str}</span>` +
            `<span class="rhat-ratio ${cls}">${dir}×${mean.toFixed(1)}</span>`;
   }).join('');
+}
+
+async function clearModel() {
+  await fetch('/clear-model', { method: 'POST' });
 }
 
 async function startTraining() {
@@ -565,8 +590,6 @@ async function togglePause() {
 
 async function resetSim() {
   await fetch('/reset', { method: 'POST' });
-  errHistory.length = 0;
-  errHistoryKN.length = 0;
   trueTrail.geometry.setDrawRange(0, 0);
   estTrail.geometry.setDrawRange(0, 0);
   rawTrail.geometry.setDrawRange(0, 0);
@@ -626,7 +649,7 @@ function animate(now) {
   prevNow = now;
 
   if (!simPaused) {
-    [drone, ghost].forEach(d => {
+    [kfDrone, knDrone, trueDrone, kfSilhouette].forEach(d => {
       d.userData.rotors.forEach((r, i) => { r.rotation.y += (i % 2 === 0 ? 1 : -1) * 18 * dt; });
     });
   }

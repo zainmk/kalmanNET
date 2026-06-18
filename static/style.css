@@ -310,6 +310,23 @@ a.badge:hover { border-color: #4466cc; color: #aaccff; }
   transition: width 0.4s ease;
   border-radius: 2px;
 }
+.kn-clear-btn {
+  width: 100%;
+  padding: 7px;
+  margin-top: 2px;
+  background: rgba(40, 8, 8, 0.6);
+  border: 1px solid #551111;
+  color: #884433;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+.kn-clear-btn:hover:not(:disabled) { background: rgba(60, 12, 12, 0.7); border-color: #993322; color: #cc5544; }
+.kn-clear-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
 .kn-train-btn {
   width: 100%;
   padding: 7px;
@@ -474,6 +491,43 @@ input[type="range"]::-moz-range-thumb {
 }
 #tooltip.visible { opacity: 1; }
 [data-tooltip] { cursor: help; }
+
+/* ── Drone mode flash banner ── */
+@keyframes drone-flash {
+  0%   { opacity: 0; transform: translateX(-50%) scaleX(0.85); }
+  12%  { opacity: 1; transform: translateX(-50%) scaleX(1); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.drone-mode-flash {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 22px;
+  border-radius: 4px;
+  font-size: 11px;
+  letter-spacing: 2.5px;
+  font-weight: bold;
+  pointer-events: none;
+  opacity: 0;
+  white-space: nowrap;
+}
+.drone-mode-flash.visible {
+  animation: drone-flash 2.4s ease forwards;
+}
+.drone-mode-flash.kf {
+  background: rgba(4, 12, 50, 0.88);
+  border: 1px solid #2255cc;
+  color: #5599ff;
+  box-shadow: 0 0 18px rgba(30, 80, 255, 0.35);
+}
+.drone-mode-flash.kn {
+  background: rgba(0, 22, 20, 0.90);
+  border: 1px solid #009988;
+  color: #00ffee;
+  box-shadow: 0 0 18px rgba(0, 204, 187, 0.40);
+}
 
 /* ── Bottom legend ── */
 .bottom-legend {

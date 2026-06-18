@@ -119,10 +119,7 @@ class DroneSim:
         # Temperature-induced barometer bias: hot air = lower pressure = reads low
         baro_bias = -dT * 0.25
 
-        # ── Generate sensor readings (shared by both filters) ─────────────────
-        self.kf.predict()
-        self.kn.predict()
-
+        # ── Generate sensor readings ───────────────────────────────────────────
         readings = {}
         z_values = {}
 
@@ -138,10 +135,12 @@ class DroneSim:
             else:
                 readings[name] = None
 
-        # ── Update both filters with identical measurements ────────────────────
+        # ── Update filters ────────────────────────────────────────────────────
+        self.kf.predict()
         for name, z in z_values.items():
             self.kf.update(name, z)
-            self.kn.update(name, z)
+
+        self.kn.step(z_values)   # predict + all-sensor update in one GRU call
 
         est    = self.kf.x.tolist()
         kn_est = self.kn._kf.x.tolist()

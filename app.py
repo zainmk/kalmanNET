@@ -1,6 +1,4 @@
 import json
-import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -8,6 +6,8 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request
 
 from drone_sim import DroneSim
+from kalmannet import KalmanNET
+from train_kalmannet_gru import train_from_buffer
 
 app = Flask(__name__)
 
@@ -107,30 +107,34 @@ def _run_training() -> None:
     with _training_lock:
         _training_state.update({
             "phase":    "OPTIMISING NETWORK",
-            "progress": 0.95,
+            "progress": 0.90,
             "step":     "training",
             "wind":     0,
             "temp":     20,
         })
 
-    # Save buffer for the training script
+    # Save buffer so the standalone script can also re-use it locally
     buf_path = Path(__file__).parent / "training_buffer.json"
     with open(buf_path, "w") as f:
         json.dump(buf, f)
 
-    # Run training script as a subprocess (keeps app.py responsive; ~15–30s on CPU)
-    script = Path(__file__).parent / "train_kalmannet_gru.py"
-    result = subprocess.run(
-        [sys.executable, str(script)],
-        capture_output=True, text=True,
-        cwd=str(Path(__file__).parent),
-    )
+    # Train in-process: single PyTorch instance, real-time progress updates
+    def _progress_cb(epoch, epochs, rms):
+        frac = 0.90 + 0.09 * (epoch / epochs)   # 0.90 -> 0.99 across epochs
+        with _training_lock:
+            _training_state["progress"] = round(frac, 3)
 
-    if result.returncode == 0:
+    try:
+        ok = train_from_buffer(buf, progress_cb=_progress_cb)
+    except Exception as exc:
+        print(f"[training] GRU training failed: {exc}")
+        ok = False
+
+    if ok:
         with sim_lock:
             sim.kn._load()
     else:
-        print("[training] GRU training failed:\n", result.stderr[-1000:])
+        print("[training] GRU training did not complete successfully.")
 
     # Pause immediately so the sim loop stops while we reset
     with _paused_lock:
@@ -226,6 +230,23 @@ def pause():
         _paused = not _paused
         state = _paused
     return jsonify({"paused": state})
+
+
+@app.route("/clear-model", methods=["POST"])
+def clear_model():
+    model_path  = Path(__file__).parent / "kalmannet_model.pt"
+    buffer_path = Path(__file__).parent / "training_buffer.json"
+    for p in (model_path, buffer_path):
+        if p.exists():
+            p.unlink()
+    with sim_lock:
+        sim.kn = KalmanNET(dt=sim.dt)   # fresh instance — no model file → trained=False
+        sim.kn.reset(sim.kf.x.tolist())
+        state = sim.step()              # one step so _state carries kn_trained=False
+    with _state_lock:
+        _state.clear()
+        _state.update(state)
+    return jsonify({"ok": True})
 
 
 @app.route("/train", methods=["POST"])
