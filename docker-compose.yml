@@ -1,0 +1,7 @@
+services:
+  kalmannet:
+    build: .
+    container_name: kalmannet
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
