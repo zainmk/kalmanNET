@@ -259,7 +259,7 @@ function flashDroneMode(isKN) {
   const el = document.getElementById('drone-mode-flash');
   el.className = '';
   void el.offsetWidth; // force reflow to restart animation
-  el.textContent = isKN ? 'DRONE  ●  KALMANNET' : 'DRONE  ●  KALMAN FILTER';
+  el.textContent = isKN ? 'DRONE  ●  KALMAN-NET' : 'DRONE  ●  KALMAN FILTER';
   el.className   = 'drone-mode-flash ' + (isKN ? 'kn' : 'kf') + ' visible';
 }
 
@@ -501,7 +501,7 @@ function updateKNPanel(s) {
     clearBtn.style.display = 'none';
     btn.style.display      = '';
     btn.disabled           = false;
-    btn.innerHTML = '&#9654; &nbsp;TRAIN KALMANNET';
+    btn.innerHTML = '&#9654; &nbsp;TRAIN KALMAN-NET';
     rhat.style.display = 'none';
   }
 }
@@ -576,7 +576,24 @@ connectSSE();
 
 // ── Control endpoints ─────────────────────────────────────────────────────────
 async function toggleSensor(name) {
-  await fetch('/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sensor: name }) });
+  const res  = await fetch('/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sensor: name }) });
+  const data = await res.json();
+  // Update immediately — when paused the SSE stream won't refresh _state
+  ['gps', 'imu', 'baro', 'mag'].forEach(n => {
+    document.getElementById(`btn-${n}`).className = 'sensor-btn ' + (data.failed[n] ? 'failed' : 'active');
+  });
+  const active = Object.values(data.failed).filter(v => !v).length;
+  const badge  = document.getElementById('badge-status');
+  if (active === 0) {
+    badge.textContent = 'DEAD RECKONING ONLY';
+    badge.style.cssText = 'border-color:#881100;background:rgba(50,10,10,0.6);color:#ff4422';
+  } else if (active < 4) {
+    badge.textContent = `DEGRADED MODE  (${active}/4)`;
+    badge.style.cssText = 'border-color:#886600;background:rgba(40,30,5,0.6);color:#ffaa33';
+  } else {
+    badge.textContent = 'ALL SENSORS NOMINAL';
+    badge.style.cssText = 'border-color:#004422;background:rgba(0,30,15,0.5);color:#00ee66';
+  }
 }
 
 async function togglePause() {

@@ -175,3 +175,89 @@ Workflow:
 **User:** Keep a log of our chat history — only in text in a file called 'CLAUDE_CHAT_LOG', keep a copy of our conversation and add to it every time we speak.
 
 **Claude:** Created this file. Will append to it at the start of each future session.
+
+---
+
+## Session 3 — GRU training fixes, UI overhaul, drone visual modes
+
+**User:** Add a progress bar so the user has an estimate of how much longer is left.
+
+**Claude:** Plan: switch `subprocess.run` to `subprocess.Popen`, read stdout line by line, parse "Epoch X/200" to update `_training_state["progress"]` from 0.9 → 0.99 during the OPTIMISING phase. Progress bar element added to the KN panel in HTML, styled in CSS, animated in JS. Interrupted before completion by a runtime error (see below).
+
+---
+
+**User:** `kalmannet.py:114: RuntimeWarning: overflow encountered in cast` when running 'play' after training.
+
+**Claude:** Root cause: the GRU outputs a dense K matrix (all 18 elements ≈ 0.95–2.0). Off-diagonal K values cause (I − K@H) to have eigenvalues of −1.85, so the covariance matrix P grows 3.42× every step. After ~100 steps the state x diverges and the innovation overflows float32.
+
+Absolute clip (K ≤ 0.95) doesn't fix it — a 3×3 block of all-0.95 still has eigenvalue 2.85.
+
+Fix: `K = np.clip(K, 0.0, np.abs(K_ref) * 2 + 1e-6)` — clips relative to the Riccati K. The Riccati K has near-zero off-diagonal elements, so the clip zeroes out the GRU's off-diagonal output and preserves filter stability. Added `np.clip(innov, -1e4, 1e4).astype(np.float32)` to silence the overflow warning, plus a safety reset if `|x| > 1e5`.
+
+---
+
+**User:** When KalmanNET is trained, have there only be a 'clear model' option (must clear, see the state when cleared — then be allowed to train).
+
+**Claude:** Changed Train/Clear buttons from `disabled` ↔ `enabled` to exclusive show/hide. When training active: both hidden. When trained: only Clear visible. When untrained: only Train visible. This forces the user to explicitly clear before re-training, making the state transition intentional and visible.
+
+---
+
+**User:** Make the actual drone shown model the KalmanNET, only when it's been trained and usable. Otherwise default to the Kalman filter. Make the swap back and forth obvious to the user. When the drone is focused on KalmanNET, have the Kalman Filter show a drone silhouette.
+
+**Claude:** Implemented three-pronged mode indication:
+
+1. **Drone colors**: refactored `makeDrone(style)` with four styles — `'kf'` (white, blue rotors), `'kn'` (cyan #00ccbb, dark rotors), `'true'` (green wireframe), `'kf-silhouette'` (translucent blue, opacity 0.30). Four drone meshes: `kfDrone`, `knDrone`, `kfSilhouette`, `trueDrone`.
+
+2. **Visibility toggle** in `applyState`: when KN trained — cyan `knDrone` at KN estimate, translucent `kfSilhouette` at KF estimate, white `kfDrone` hidden. When untrained — white `kfDrone` at KF estimate, others hidden.
+
+3. **Flash banner**: `#drone-mode-flash` div with CSS keyframe animation (2.4s fade in/hold/out). Shows "DRONE ● KALMANNET" in cyan or "DRONE ● KALMAN FILTER" in blue on every mode change. Legend updates dynamically: est. drone dot color + label change, KF silhouette row appears/disappears.
+
+---
+
+## Session 4 — Deployment planning, subprocess → in-process training
+
+**User:** Put the 'KalmanNET' next to the other lines of reference in the legend.
+
+**Claude:** Moved `#legend-kn` in `index.html` to sit immediately after Kalman (True / Raw / Kalman / KalmanNET), before the dot entries (True drone / Est. drone / GPS / IMU / Baro / Mag / Unc.). KF silhouette entry placed after Est. drone.
+
+---
+
+**User:** If I wish to deploy this application — what would be the best way? Render or Vercel? (no code changes — simply plan how to deploy)
+
+**Claude:** Render. Vercel is architecturally incompatible — its serverless functions are stateless, short-lived, and Lambda-backed. The app requires persistent background threads (`_sim_loop`), long-lived SSE connections, a ~30s subprocess call, in-memory shared state, and PyTorch (~2 GB), all of which hit hard Vercel limits.
+
+Render plan: Web Service (not Static Site), Standard tier ($25/mo, 2 GB RAM), start command `gunicorn app:app -w 1 --threads 8 -t 300`, CPU-only PyTorch wheel in requirements.txt (`--index-url https://download.pytorch.org/whl/cpu`), `--workers 1` mandatory (all sim state is in-process globals), Render Disk add-on for model persistence or accept ephemeral model on redeploy.
+
+---
+
+**User:** Would I have to pay for their tier? Why — is there a way to limit the size so I can manage on the free tier?
+
+**Claude:** The spike is specifically the subprocess model: during training, both the Flask parent process and the training subprocess each load PyTorch independently (~230 MB each), hitting ~460 MB simultaneously — over the 512 MB free tier limit.
+
+At idle (inference only) the app fits comfortably in 512 MB. The free tier is viable if training is removed from the deployed version. Cleanest path: commit `kalmannet_model.pt`, implement numpy-only GRU inference (extracting weights from the `.pt` file), drop torch from the deployed requirements. Runtime drops to ~90 MB. Training remains a local workflow (already the practical reality). One downside: users of the deployed version can't trigger training.
+
+---
+
+**User:** Further explain this design decision — the need and solution, in terms of subprocess vs. in-process. Do I lose any training accuracy?
+
+**Claude:** The GIL concern that motivated subprocess doesn't apply to PyTorch. Python's GIL prevents multiple threads from executing Python bytecode simultaneously, but PyTorch releases the GIL during its C++ compute kernels — matrix multiplies, GRU forward/backward — so other Flask threads stay responsive regardless. The sim is already paused during the optimising phase, so there is nothing that needs to run concurrently.
+
+The actual cost of subprocess: (1) dual PyTorch instances → ~460 MB peak, (2) no real-time progress — `capture_output=True` buffers all stdout until the process exits, so the progress bar would need stdout parsing workarounds.
+
+In-process thread: single PyTorch instance (~360 MB peak), direct `_training_state["progress"]` writes each epoch → smooth real-time progress bar for free.
+
+No accuracy loss. Training accuracy depends entirely on the data, model architecture, loss function, and hyperparameters — none of which change between subprocess and thread execution environments. The only numerical difference is random seed, which is statistically irrelevant.
+
+---
+
+**User:** Make the changes — switch to in-process thread.
+
+**Claude:** Implemented:
+- `train_kalmannet_gru.py`: extracted training loop into `train_from_buffer(buffer, progress_cb=None)`. `main()` is now a thin wrapper so `python train_kalmannet_gru.py` still works locally.
+- `app.py`: removed `import subprocess` and `import sys`. Added `from train_kalmannet_gru import train_from_buffer`. Replaced `subprocess.run(...)` block with a direct call inside `_run_training`. Added `_progress_cb(epoch, epochs, rms)` closure that writes `progress = 0.90 + 0.09 * (epoch / epochs)` to `_training_state` each epoch — progress bar now animates from 90% → 99% in real time.
+
+---
+
+**User:** Update the CLAUDE_CHAT_LOG on the conclusion of every message between us, so it's more up to date and live.
+
+**Claude:** Appended Sessions 3 and 4 to bring the log current. Updated the memory rule from "end of session" to "after every response." The log will be updated as the last action of each reply going forward.

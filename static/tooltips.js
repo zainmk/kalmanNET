@@ -6,7 +6,7 @@ const TOOLTIPS = {
 
   'badge-helix': `The drone's true programmed path is a rising helix with radius 20 m, angular speed 0.3 rad/s, and vertical climb of 1 m/s. This serves as the analytic ground truth and lets us compare error accumulation in the filter at every timestep.<br><br><b>Assumption:</b> the autopilot recovers from wind push at a fixed 3% per step regardless of wind magnitude — a real autopilot would fight harder at low speeds and risk being overwhelmed at high speeds. Wind only displaces the drone horizontally; vertical gusts are not modelled.`,
 
-  'badge-kn': `<b>KalmanNET</b> — Neural Network-Aided Kalman Filtering<br><br>
+  'badge-kn': `<b>Kalman-NET</b> — Neural Network-Aided Kalman Filtering<br><br>
     Replaces the fixed R matrix with a per-sensor MLP that predicts the effective measurement noise covariance from a sliding window of recent innovations. Trained on a scripted calibration flight where ground truth is known; at inference only the live innovation sequence is used — no explicit environment state required.<br><br>
     Click to open the original paper (Revach et al., 2022).`,
 
@@ -19,10 +19,10 @@ const TOOLTIPS = {
     <span style="display:block;margin:6px 0 2px;padding:5px 9px;background:rgba(30,55,130,0.45);border-left:2px solid #4477dd;border-radius:3px;font-family:monospace;color:#aaccff;text-align:center">K = P·Hᵀ·(H·P·Hᵀ + <b style="color:#fff">R</b>)⁻¹ &nbsp;<span style="color:#5577aa;font-size:9px">← Kalman gain</span></span>
     <span style="display:block;margin:2px 0 6px;padding:5px 9px;background:rgba(30,55,130,0.45);border-left:2px solid #4477dd;border-radius:3px;font-family:monospace;color:#aaccff;text-align:center">x̂ ← x̂ + K·(z − H·x̂) &nbsp;<span style="color:#5577aa;font-size:9px">← state correction</span></span>
     <b>R — Measurement Noise Covariance</b><br>
-    Encodes how much the kalman filter trusts each sensor. It is set once at calibration but never changed. Large R → sensor barely shifts the estimate. Small R → sensor dominates. Unaccountable environmental noise can lead to an inaccurate 'R' and degrade the estimate - <i> KalmanNET learns from its environment to assign 'R' appropriately, for a more accurate representation<i>.<br><br>
+    Encodes how much the kalman filter trusts each sensor. It is set once at calibration but never changed. Large R → sensor barely shifts the estimate. Small R → sensor dominates. Unaccountable environmental noise can lead to an inaccurate 'R' and degrade the estimate - <i> Kalman-NET learns from its environment to assign 'R' appropriately, for a more accurate representation<i>.<br><br>
     <b>Assumptions of Linearity: </b><br> 
     We assume the following two assumptions; the motion model is linear - the drone flies in a constant velocity helix, and the sensor models are linear - each sensor observes a fixed subset of the state. 
-    Extensions of the algorithm (EKF, UKF) exist to address non-linearities analytically - <i> KalmanNET addresses it by replacing this gain formula with a learned network instead </i>.`,
+    Extensions of the algorithm (EKF, UKF) exist to address non-linearities analytically - <i> Kalman-NET addresses it by replacing this gain formula with a learned network instead </i>.`,
 
 
 
@@ -68,7 +68,7 @@ const TOOLTIPS = {
     &nbsp;x̂ ← x̂ + K·ε &nbsp; scalar correction propagated to all 6 states via K<br><br>
     <b><u>Kalman-NET:</u></b><br>
     &nbsp;σ = 0.5 m &nbsp;|&nbsp; R = [0.25] &nbsp;|&nbsp; calibrated at 20°C, zero bias<br>
-    Temperature introduces two compounding errors. At 50°C (dT = +30): actual σ ≈ 0.74 m <i>and</i> a persistent −3.6 m altitude bias (hot air has lower pressure — baro reads drone as lower than it is). At −10°C (dT = −30): +3.6 m bias (cold air reads high). The filter trusts the biased reading at full weight because R is small and fixed — it cannot distinguish systematic offset from random noise. KalmanNET learns the relationship between temperature and effective baro error, inflating R when temperature deviates from calibration so the filter down-weights a persistently wrong measurement rather than anchoring altitude to it.`,
+    Temperature introduces two compounding errors. At 50°C (dT = +30): actual σ ≈ 0.74 m <i>and</i> a persistent −3.6 m altitude bias (hot air has lower pressure — baro reads drone as lower than it is). At −10°C (dT = −30): +3.6 m bias (cold air reads high). The filter trusts the biased reading at full weight because R is small and fixed — it cannot distinguish systematic offset from random noise. Kalman-NET learns the relationship between temperature and effective baro error, inflating R when temperature deviates from calibration so the filter down-weights a persistently wrong measurement rather than anchoring altitude to it.`,
 
   'btn-mag': `
     <b>Magnetometer — horizontal position [x, y]</b><br><br>
@@ -80,11 +80,11 @@ const TOOLTIPS = {
     &nbsp;x̂ ← x̂ + K·ε &nbsp; gentle correction — large R keeps gain small, so each fix barely moves the estimate<br><br>
     <b><u>Kalman-NET:</u></b><br>
     &nbsp;σ = 3.0 m &nbsp;|&nbsp; R = diag(9, 9)<br>
-    In this simulation MAG noise is fixed — wind and temperature do not affect it, so there is no R mismatch to observe here. In real deployments, magnetic interference from motors, nearby structures, and dynamic environments causes effective noise to vary widely. KalmanNET would learn to adjust R in response to detected interference patterns — tightening gain when MAG is momentarily reliable, loosening it when interference spikes, rather than holding R constant at a conservative worst-case value.`,
+    In this simulation MAG noise is fixed — wind and temperature do not affect it, so there is no R mismatch to observe here. In real deployments, magnetic interference from motors, nearby structures, and dynamic environments causes effective noise to vary widely. Kalman-NET would learn to adjust R in response to detected interference patterns — tightening gain when MAG is momentarily reliable, loosening it when interference spikes, rather than holding R constant at a conservative worst-case value.`,
 
   // ── Environment overlay ──────────────────────────────────────────────────────
 
-  'env-title': `Environmental conditions that stress the sensor suite beyond the Kalman filter's calm-condition assumptions. The filter's R matrices never update — the growing mismatch between assumed and actual noise is exactly what KalmanNET would learn to correct.`,
+  'env-title': `Environmental conditions that stress the sensor suite beyond the Kalman filter's calm-condition assumptions. The filter's R matrices never update — the growing mismatch between assumed and actual noise is exactly what Kalman-NET would learn to correct.`,
 
   'env-reset-btn': `Reset to Kalman calibration defaults: 0 m/s wind, 0° heading, 20°C. These are the exact conditions the filter's R matrices were tuned for — where it performs optimally.`,
 
