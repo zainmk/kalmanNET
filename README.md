@@ -2,7 +2,7 @@
 
 A simulation showing where classical sensor fusion breaks down in changing environments — and how Kalman-NET, a recurrent neural network, learns to compensate.
 
-![Demo](screenrecording.mp4)
+
 
 ---
 
@@ -131,6 +131,61 @@ The training signal requires knowing the true drone state during the calibration
 ### Training coverage
 
 The scripted calibration flight covers wind 0–20 m/s and temperature −10–50°C in discrete phases. Conditions not represented — simultaneous high wind and extreme cold, rapid step-changes, GPS outages during collection — are out-of-distribution at inference. Production training data would span the full joint operating envelope over many flights.
+
+---
+
+## AI and the path to realistic simulation
+
+The biggest gap between this demo and real deployment is the quality of the simulation itself — Gaussian noise formulas are a poor substitute for the real, correlated, heavy-tailed behaviour of physical sensors. This is an active area of AI research.
+
+### Learned sensor models
+
+Rather than hand-writing noise formulas, generative models trained on real flight logs can learn the actual distribution of GPS multipath, IMU bias drift, and barometric propwash directly from data. A GAN or diffusion model trained on thousands of real drone flights could produce sensor readings statistically indistinguishable from hardware — including the correlation structure (e.g. GPS noise spiking as the drone passes a building) that a Gaussian model cannot capture. A Kalman-NET trained on data from such a model would generalise far better to deployment than one trained on this simulation.
+
+### Neural digital twins
+
+A **digital twin** is a real-time virtual replica of a physical system. Modern AI-powered twins (NVIDIA Omniverse, Microsoft Azure Digital Twins) go beyond static physics models — they embed learned neural components that update continuously as the real system runs. Applied to a drone, the twin would ingest real telemetry during flight, detect where its predictions diverge from reality, and update its sensor noise model accordingly. A Kalman-NET trained against a twin that is itself learning becomes progressively more calibrated to the actual deployed environment without requiring repeated calibration flights.
+
+### Online adaptation without ground truth
+
+This demo requires ground truth during training (the analytical helix). In the real world, ground truth is expensive. Physics-informed neural networks and self-supervised learning offer an alternative: the network uses **multi-sensor consistency** as a proxy signal — if GPS, IMU, and barometer all agree, the estimate is probably correct; if one disagrees persistently, it is probably biased. With this signal, a network could continue adapting during operational flights, closing the sim-to-real gap over time without any external reference system.
+
+### Foundation models for sensor fusion
+
+Large pre-trained models have begun to appear in the robotics and navigation space — models trained across diverse sensor modalities, platforms, and environments. A foundation model for inertial navigation, fine-tuned on a brief calibration flight, could replace both the simulation and the scripted training pipeline. The calibration flight provides the task-specific signal; the pre-trained weights carry the general understanding of how sensors behave. This would dramatically reduce the ground truth and data collection burden that currently makes KalmanNET deployment expensive.
+
+---
+
+## Software design for a hosted demo
+
+Running a neural network training pipeline inside a browser-accessible web application imposes constraints that a production ML system would not face. The decisions below were made specifically to keep the demo self-contained, fast to start, and hostable on a single CPU instance.
+
+### Model size — trainable on CPU in seconds
+
+The GRU uses `hidden=64` and produces a model file of ~70 KB. This is deliberately small. The paper's architecture uses larger hidden dimensions; scaling to `hidden=256` would increase training time from ~30 seconds to over 10 minutes on a single CPU core — far too long for an interactive demo where a user clicks a button and waits. The 64-unit GRU is expressive enough to demonstrate the adaptive gain mechanism on the simulation's noise patterns while remaining trainable within a reasonable wait.
+
+### Training speed — vectorisation and subsampling
+
+The raw calibration buffer contains ~5,800 steps. Processing these sequentially in a Python loop (the naive approach) produces ~23,000 individual PyTorch GRU calls per epoch — approximately 28 minutes for 200 epochs. Two optimisations bring this to ~32 seconds:
+
+- **10× subsampling** reduces the GRU sequence length from 5,800 to 580 steps. Temporal patterns in sensor noise operate on timescales of seconds, not milliseconds, so every 10th step retains the relevant signal.
+- **Teacher-forced vectorisation** replaces the sequential per-step Python loop with a single batched GRU call over all 580 steps, followed by vectorised matrix multiplications (`torch.bmm`) to compute all state corrections in parallel. PyTorch's BLAS kernels handle this in one pass rather than 580 individual calls.
+
+### Serving — Flask SSE, single process
+
+The simulation state is broadcast to the browser at 20 Hz over a **Server-Sent Events** (SSE) connection — a persistent HTTP response that the server writes to continuously. SSE is unidirectional (server → browser only), which is all this application needs. It requires no extra library, no handshake protocol, and no client-side connection management beyond `new EventSource()`. WebSockets would add complexity for no benefit.
+
+The Flask application runs as a **single process with multiple threads**. This is a hard requirement: the simulation state (`_state`, `_paused`, `_training_state`) lives in Python global variables protected by threading locks. Multiple worker processes would each maintain independent copies of this state — each user would effectively be looking at a different simulation. A single process with `--threads 8` serves concurrent SSE connections and API requests without this problem.
+
+### Training execution — in-process thread, not subprocess
+
+Training runs in a daemon thread within the same Python process rather than a child subprocess. The practical reason is memory: a subprocess would start a second Python interpreter, load PyTorch a second time (~230 MB), and run alongside the main process — approximately 460 MB peak during training, which exceeds the free tier of most hosting platforms. A thread shares the parent process's PyTorch runtime, keeping peak memory at ~360 MB. PyTorch releases the GIL during its C++ compute operations, so the SSE stream and Flask routes remain responsive throughout training. Progress updates write directly to `_training_state` each epoch — no stdout parsing needed.
+
+### Dependencies — CPU-only PyTorch, no build step
+
+The GPU-enabled PyTorch wheel is ~2.5 GB. The CPU-only wheel is ~200 MB. For a 70 KB model running 580-step sequences, there is no performance case for GPU — the data simply does not saturate a GPU's parallelism. The CPU-only install keeps the deployment footprint small and eliminates CUDA driver dependencies.
+
+The frontend uses **Three.js loaded from CDN** with vanilla JavaScript and CSS — no bundler, no Node.js, no build step. The entire application starts with `python app.py`. This makes the demo trivially deployable on any machine with Python and avoids the maintenance burden of a JavaScript build pipeline for what is fundamentally a Python project.
 
 ---
 
