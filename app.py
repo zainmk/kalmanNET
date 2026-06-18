@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -260,4 +261,4 @@ def train():
 
 if __name__ == "__main__":
     print("Starting KalmanNET drone demo at http://localhost:5000")
-    app.run(debug=False, threaded=True, port=5000)
+    app.run(debug=False, threaded=True, port=int(os.environ.get('PORT', 5000)))

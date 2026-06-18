@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: kalmannet
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && pip install torch --index-url https://download.pytorch.org/whl/cpu
+    startCommand: gunicorn app:app -w 1 --threads 8 -t 300 -b 0.0.0.0:$PORT
