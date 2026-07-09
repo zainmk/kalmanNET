@@ -9,7 +9,8 @@ const TOOLTIPS = {
 
   'badge-kn': `<b>Kalman-NET</b> — Neural Network-Aided Kalman Filtering<br><br>
     Replaces the Kalman gain formula K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹ with a GRU network that predicts K directly from the recent history of innovations — the gap between what sensors measured and what the filter expected.<br><br>
-    Unlike R-inflation, the GRU can <i>increase</i> K above the Riccati value — allowing the filter to trust a sensor <i>more</i> than the standard formula, not just less. This is necessary when wind displaces the true drone position: the filter must increase trust in GPS to track the displaced trajectory, not reduce it.<br><br>
+    Unlike R-inflation, the GRU can move K in <i>either</i> direction — trusting a sensor more OR less than the standard formula, not just less.<br><br>
+    <b>When it helps: bias, not noise.</b> A Kalman filter is already the optimal estimator against zero-mean noise, so raising wind (which just inflates sensor noise) is a case it handles well and the GRU barely improves. The GRU earns its place against <i>bias</i> — a systematic, one-sided error a fixed R cannot even detect. Raise Temperature and watch the barometer bias: the GRU spots the sustained innovation and down-weights the altimeter, where the standard filter blindly follows it.<br><br>
     Trained once on a scripted calibration flight where ground truth is known. At inference only live sensor data is needed — no explicit environment state required.<br><br>
     Click to open the original paper (Revach et al., 2022).`,
 
@@ -23,14 +24,14 @@ const TOOLTIPS = {
     <span style="display:block;margin:2px 0 6px;padding:5px 9px;background:rgba(30,55,130,0.45);border-left:2px solid #4477dd;border-radius:3px;font-family:monospace;color:#aaccff;text-align:center">x̂ ← x̂ + K·(z − H·x̂) &nbsp;<span style="color:#5577aa;font-size:9px">← state correction</span></span>
     <b>R — Measurement Noise Covariance</b><br>
     Encodes how much the filter trusts each sensor. Set once at calibration and never changed. Large R → small K → sensor barely shifts the estimate. Small R → large K → sensor dominates. When the environment degrades sensor quality, R is wrong — and so is K.<br><br>
-    <b>Linearity assumptions:</b><br>
-    The motion model is linear (constant-velocity helix). The sensor models are linear (each sensor observes a fixed subset of the 6-D state). Extensions like EKF and UKF handle non-linearities analytically — Kalman-NET addresses them by replacing the gain formula with a learned network.`,
+    <b>Model assumptions:</b><br>
+    The filter's models are linear: a constant-velocity motion model, and sensors that each observe a fixed linear subset of the 6-D state. Note the true trajectory is a helix — curving flight constantly violates the constant-velocity assumption. That mismatch is absorbed by the process noise Q, and is a second, permanent source of model error alongside the fixed R. Extensions like the EKF and UKF handle non-linear models analytically; Kalman-NET instead compensates by learning the gain.`,
 
 
   // ── Sensor control panel ─────────────────────────────────────────────────────
 
-  'panel-sensor-control': `No single sensor is sufficient. GPS drifts without velocity context. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. The Kalman filter fuses these values into a complete, robust position estimate.<br><br>
-    Disabling sensors degrades the estimate but does not cause catastrophic failure — the filter falls back to dead-reckoning on the remaining sensors. Watch how the estimate degrades as you disable each sensor in turn.`,
+  'panel-sensor-control': `No single sensor is sufficient. GPS is drift-free but noisy — alone it gives a jittery, jumpy estimate. IMU accumulates position error without an anchor. Barometer only sees altitude. Magnetometer is too noisy to rely on alone. The Kalman filter fuses these values into a complete, robust position estimate.<br><br>
+    Disabling sensors degrades the estimate but does not cause catastrophic failure — the filter leans harder on the remaining sensors, dead-reckoning only the states nothing measures. Watch how the estimate degrades as you disable each sensor in turn.`,
 
   'btn-gps': `
     <b>GPS — absolute position [x, y, z]</b><br><br>
@@ -43,12 +44,12 @@ const TOOLTIPS = {
     &nbsp;x̂ ← x̂ + K·ε &nbsp; all 6 states corrected via cross-covariance in P<br><br>
     <b><u>Kalman-NET:</u></b><br>
     &nbsp;Calibration: σ = 2.0 m &nbsp;|&nbsp; R = diag(4, 4, 4)<br>
-    Wind physically displaces the true drone position (the green line shifts). GPS correctly measures the displaced position, but the Kalman filter's motion model predicts the undisturbed helix — so GPS innovations grow with every step. With fixed R and the standard K, the filter under-corrects, always lagging behind where the drone actually is.<br><br>
-    Kalman-NET sees these growing, sustained innovations and <i>increases</i> K for GPS above the Riccati value — pulling the estimate aggressively toward GPS to track the displaced trajectory. This is the scenario R-inflation cannot handle: the filter needs to trust GPS <i>more</i>, not less.`,
+    Wind physically displaces the true drone position (the green line shifts), and GPS correctly measures the displaced position. Because GPS reports position <i>every step</i>, the Kalman filter simply follows it — the constant-velocity model only has to bridge a single 50 ms gap, so even a large, slow displacement is tracked without lag.<br><br>
+    What wind actually does to GPS is <i>inflate its noise</i> (σ = 2 + 0.12·w m) — the readings scatter more, but their average stays correct. Averaging zero-mean noise is precisely what a Kalman filter does optimally, so this is a case it handles well and Kalman-NET barely improves on. GPS is a good illustration of the rule: <b>Kalman-NET's advantage is against bias, not noise</b> — see the temperature-biased barometer for where it clearly wins. (The GRU's ability to raise K <i>above</i> the Riccati value matters in real systems where GPS is sparse and the model must extrapolate between fixes — but this simulation's every-step GPS does not exercise it.)`,
 
   'btn-imu': `
     <b>IMU — velocity [vx, vy, vz]</b><br><br>
-    <b><u>Purpose:</u></b> Fast, continuous updates every step. Bridges the gaps between GPS fixes so position doesn't drift in between. Measures velocity, not position — velocity errors integrate into unbounded position error over time without GPS to correct them.<br><br>
+    <b><u>Purpose:</u></b> Supplies low-noise velocity information every step, which the filter integrates to smooth out GPS's ±2 m position scatter. (In real systems GPS arrives at only 1–10 Hz and the IMU literally bridges the gaps between fixes; in this simulation all sensors update every step, so the IMU's value is its precision, not its rate.)<br><br>
     <b><u>Kalman Filter:</u></b><br>
     &nbsp;H = [0₃ | I₃] &nbsp; selects velocity rows of the 6-D state<br>
     &nbsp;ε = z − H·x̂ &nbsp; 3×1 innovation<br>
@@ -69,12 +70,13 @@ const TOOLTIPS = {
     &nbsp;x̂ ← x̂ + K·ε &nbsp; scalar correction propagated to all 6 states via K<br><br>
     <b><u>Kalman-NET:</u></b><br>
     &nbsp;Calibration: σ = 0.5 m &nbsp;|&nbsp; R = [0.25] &nbsp;|&nbsp; calibrated at 20°C, zero bias<br>
-    Temperature introduces two compounding errors. At 50°C (dT = +30): noise σ ≈ 0.74 m <i>and</i> a persistent <b>−7.5 m altitude bias</b> (hot air is less dense — lower pressure — baro reads drone as lower than it is). At −10°C (dT = −30): <b>+7.5 m bias</b> (cold air reads high).<br><br>
+    Temperature introduces two compounding errors. At 50°C (dT = +30): noise σ ≈ 0.74 m <i>and</i> a persistent <b>−7.5 m altitude bias</b>. Why: a barometric altimeter converts pressure to altitude assuming a standard atmosphere. In air warmer than standard, pressure decreases more slowly with height — so at the drone's true altitude the pressure is <i>higher</i> than the model expects, and the altimeter reports a <i>lower</i> altitude. Hot reads low. At −10°C the effect reverses: <b>+7.5 m bias</b> — cold reads high ("hot to cold, look out below").<br><br>
     The filter trusts this biased reading at full weight because R is small and fixed — it cannot distinguish a systematic offset from random noise. Kalman-NET detects the sustained, one-directional innovations and <i>reduces</i> K for baro, down-weighting the faulty altimeter and anchoring altitude through GPS instead.`,
 
   'btn-mag': `
     <b>Magnetometer — horizontal position [x, y]</b><br><br>
     <b><u>Purpose:</u></b> Independent XY fix that doesn't rely on satellite signal. When GPS fails, MAG is the only sensor preventing horizontal position from going unbounded — even if noisily. High R means the filter assigns it low Kalman gain, so GPS naturally dominates when healthy. Zero altitude awareness.<br><br>
+    <i>(A modelling simplification: a real magnetometer measures heading, not position. Treat this sensor as a stand-in for any coarse, GPS-independent position aid — RF beacons, vision landmarks, celestial fixes.)</i><br><br>
     <b><u>Kalman Filter:</u></b><br>
     &nbsp;H = [1,0,0,0,0,0; 0,1,0,0,0,0] &nbsp; selects x and y rows of the 6-D state<br>
     &nbsp;ε = z − H·x̂ &nbsp; 2×1 innovation<br>
@@ -92,16 +94,34 @@ const TOOLTIPS = {
 
   'env-reset-btn': `Reset to Kalman calibration defaults: 0 m/s wind, 0° heading, 20°C. These are the exact conditions the filter's R matrices were tuned for — where it performs optimally.`,
 
-  'env-wind-speed-label': `Physically deflects the true trajectory (green line). Wind force accumulates each step and decays at 3% per step — the drone is pushed, not corrected. Also raises GPS noise via multipath and turbulence (σ = 2 + 0.12·w m) and IMU noise via vibration (σ = 0.5 + 0.04·w m/s). The Kalman filter always assumes calm-condition R — it does not know wind has increased.`,
+  'env-wind-speed-label': `Physically deflects the true trajectory (green line). Wind force accumulates each step and decays at 3% per step — the drone is pushed, not corrected. Also raises GPS noise via multipath and turbulence (σ = 2 + 0.12·w m) and IMU noise via vibration (σ = 0.5 + 0.04·w m/s). The Kalman filter always assumes calm-condition R — it does not know wind has increased.<br><br><i>But wind is a <b>noise</b> problem: the readings scatter more, yet their average is still correct, and GPS still reports position every step. A Kalman filter averages that out near-optimally — so this is the case where Kalman-NET has little to add, and may even track the extra scatter. Compare it with Temperature.</i>`,
 
   'env-wind-heading-label': `Direction the wind blows, in degrees clockwise from East. Only has an effect when Wind Speed > 0.`,
 
-  'env-temp-label': `Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = −0.25·ΔT m — hot air has lower pressure, so the baro reads the drone as lower than it actually is; cold air reads high). The Kalman filter assumes 20°C at all times and cannot detect either effect.`,
+  'env-temp-label': `Sensors are calibrated at 20°C. Deviations cause IMU thermal drift (σ = 0.5 + 0.008·|ΔT| m/s) and a barometer altitude bias (offset = −0.25·ΔT m — in warm air, pressure at altitude is higher than the standard-atmosphere model assumes, so the baro converts it to a lower indicated altitude: hot reads low, cold reads high). The Kalman filter assumes 20°C at all times and cannot detect either effect.<br><br><i>The barometer offset is a <b>bias</b>, not noise — averaging cannot remove it (the average is wrong), and a fixed R cannot distinguish it from scatter. This is the case Kalman-NET is built for: it spots the sustained, one-sided error and down-weights the altimeter, re-anchoring altitude on GPS. This is where it clearly beats the Kalman filter.</i>`,
 
 
   // ── Sidebar panels ───────────────────────────────────────────────────────────
 
   'panel-sensor-readings': `Raw: the noisy measurement received from the sensor this timestep. KF Est: the Kalman filter's current best estimate of that quantity, fused from all active sensors. KN Est: the Kalman-NET estimate (shown only after training).`,
+
+
+  // ── Position-error chart ─────────────────────────────────────────────────────
+
+  'err-chart-title': `Distance between each filter's estimated position and the true position, metres, rolling 15-second window. Blue: standard Kalman filter. Cyan: Kalman-NET (after training). Push the environment sliders and watch the gap open.`,
+
+
+  // ── Kalman-NET panel ─────────────────────────────────────────────────────────
+
+  'panel-kn-title': `Kalman-NET status panel. UNTRAINED: the cyan drone is hidden and Kalman-NET mathematically mirrors the standard filter. Click TRAIN to run a scripted calibration flight and optimise the network — afterwards the cyan drone flies the learned-gain estimate and the white filter drone becomes a translucent silhouette for comparison. The trained model persists on disk across restarts.`,
+
+  'btn-train': `Runs the full training pipeline (~1 minute): the sim resets and flies a scripted calibration sequence at 10× speed — calm, wind up to 20 m/s, temperatures from −10°C to 50°C, combined stress — collecting ~5,800 steps of sensor data with known ground truth. Then the GRU is optimised for 200 epochs to minimise position error. The model saves to kalmannet_model.pt and loads automatically on future starts. Controls are locked while training runs.`,
+
+  'btn-kn-view': `Switch the primary drone between the Kalman-NET estimate and the standard Kalman filter estimate, without deleting the trained model. Use it to A/B the two filters under identical conditions.`,
+
+  'btn-clear': `Deletes the trained model and training data from disk and reverts to the standard Kalman filter (white drone). Cannot be undone — retraining takes about a minute.`,
+
+  'kn-rhat-title': `How strongly Kalman-NET is correcting with each sensor, relative to the standard Kalman filter. Each number is ‖K_learned‖ / ‖K_Riccati‖ for one measurement axis. ≈1.0 — agrees with the standard filter. ↑ above 1 — trusting the sensor MORE than the formula (e.g. GPS in wind, to chase the displaced trajectory). ↓ below 1 — trusting it LESS (e.g. a temperature-biased barometer). Values are clipped at 2× for filter stability.`,
 
 
   // ── Bottom legend ────────────────────────────────────────────────────────────
@@ -116,7 +136,7 @@ const TOOLTIPS = {
   'legend-imu':        `The orange arrow shows the IMU's measured velocity vector. Direction is heading; length scales with speed. Disappears when IMU is failed.`,
   'legend-baro':       `The pink dot and horizontal ring mark the barometer's measured altitude plane. The ring stays flat — barometers have no XY awareness. Under temperature stress the ring drifts above or below the true altitude.`,
   'legend-mag':        `The purple dot shows the magnetometer's raw XY position reading. It is noisier than GPS (±3 m) — notice the wider scatter. MAG provides XY backup when GPS fails.`,
-  'legend-unc':        `The translucent blue sphere represents 1σ position uncertainty from the covariance matrix P. Inflates as sensors fail; shrinks when they recover.`,
+  'legend-unc':        `The translucent blue sphere represents 1σ position uncertainty from the active filter's covariance matrix P — the Kalman filter's before training, Kalman-NET's after. Inflates as sensors fail; shrinks when they recover.`,
 
 };
 

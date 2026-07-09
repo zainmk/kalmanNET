@@ -103,6 +103,14 @@ class KalmanNET:
             self._kf_fallback(z_values)
             return
 
+        # Safety: reset if state has diverged (prevents overflow cascade).
+        # Must run BEFORE innovations are built, so they are computed from the
+        # post-reset state rather than the discarded diverged one.
+        if np.any(~np.isfinite(self._kf.x)) or np.any(np.abs(self._kf.x) > 1e5):
+            self._kf.x = np.zeros(STATE_DIM)
+            self._kf.P = np.eye(STATE_DIM) * 10.0
+            self._h    = None
+
         # Build 9D innovation vector (all sensors combined)
         iv9        = np.zeros(TOTAL_MEAS_DIM, dtype=np.float32)
         innov_dict = {}
@@ -112,12 +120,6 @@ class KalmanNET:
             innov_dict[name] = innov
             o     = SENSOR_OFFSETS[name]
             iv9[o:o + SENSOR_DIMS[name]] = np.clip(innov, -1e4, 1e4).astype(np.float32)
-
-        # Safety: reset if state has diverged (prevents overflow cascade)
-        if np.any(~np.isfinite(self._kf.x)) or np.any(np.abs(self._kf.x) > 1e5):
-            self._kf.x = np.zeros(STATE_DIM)
-            self._kf.P = np.eye(STATE_DIM) * 10.0
-            self._h    = None
 
         # Single GRU call for this step
         with torch.no_grad():

@@ -213,7 +213,7 @@ function buildBadgeTooltip(failed) {
   if (failed.gps)
     parts.push('<b>GPS offline</b> — primary position anchor lost. XY now relies solely on magnetometer (σ = 3 m). The filter dead-reckons from IMU velocity with no absolute position correction — error accumulates every step.');
   if (failed.imu)
-    parts.push('<b>IMU offline</b> — no velocity corrections between GPS fixes. The filter assumes constant velocity but the drone curves, so predictions degrade between fixes. Error shows a sawtooth pattern: spikes between fixes, partial recovery on each GPS update.');
+    parts.push('<b>IMU offline</b> — no velocity measurements. The filter\'s velocity estimate now comes only from differencing noisy position fixes through the covariance, and the constant-velocity prediction can\'t follow the curving path on its own. Position estimates become visibly noisier and lag on turns.');
   if (failed.baro)
     parts.push('<b>Barometer offline</b> — altitude now constrained only by GPS (σ = 2 m vs baro\'s σ = 0.5 m). XY is unaffected. Altitude estimates become noisier. Most significant when temperature was causing a baro bias the filter was following.');
   if (failed.mag)
@@ -253,6 +253,66 @@ function setSR(base, rawVal, kfVal, knVal, d) {
 
 let latestState  = null;
 let prevKNTrained = false;
+let prevTrainingActive = false;
+let knViewEnabled = true;   // 3.3: A/B toggle between KN and pure-KF view (client-only)
+
+// ── Position-error chart ────────────────────────────────────────────────────────
+const ERR_MAX_SAMPLES = 300;   // 15 s at 20 Hz
+const errBufKF = [];
+const errBufKN = [];
+let lastErrT = null;   // sim time of the last sampled frame (gates paused replays)
+const errChartCanvas = document.getElementById('err-chart');
+const errChartCtx    = errChartCanvas.getContext('2d');
+
+function clearErrChart() {
+  errBufKF.length = 0;
+  errBufKN.length = 0;
+  lastErrT = null;
+  drawErrChart();
+}
+
+function drawErrChart() {
+  const ctx = errChartCtx;
+  const W = errChartCanvas.width, H = errChartCanvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(3, 4, 16, 0.6)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Auto-scale y to the largest value in either window, min 2 m.
+  let maxV = 2;
+  for (const v of errBufKF) if (v > maxV) maxV = v;
+  for (const v of errBufKN) if (v > maxV) maxV = v;
+
+  // Faint integer-metre gridlines (only when they aren't too dense).
+  const stepPx = H / maxV;
+  if (stepPx >= 8) {
+    ctx.strokeStyle = 'rgba(80, 100, 170, 0.18)';
+    ctx.lineWidth = 1;
+    for (let m = 1; m < maxV; m++) {
+      const y = H - m * stepPx;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawSeries(buf, color) {
+    if (buf.length < 2) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < buf.length; i++) {
+      const x = (i / (ERR_MAX_SAMPLES - 1)) * W;
+      const y = H - Math.min(buf[i], maxV) / maxV * H;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  drawSeries(errBufKF, '#00aaff');
+  drawSeries(errBufKN, '#00ccbb');
+}
 
 // ── Drone mode flash banner ────────────────────────────────────────────────────
 function flashDroneMode(isKN) {
@@ -280,7 +340,7 @@ function applyState(s) {
 
   const [ex, ey, ez] = s2t(s.est);
   const [tx, ty, tz] = s2t(s.true);
-  const knActive     = !!(s.kn_trained && s.kn_est);
+  const knActive     = !!(s.kn_trained && s.kn_est) && knViewEnabled;
 
   // ── Drone visibility & position ──────────────────────────────────────────────
   if (knActive) {
@@ -309,7 +369,9 @@ function applyState(s) {
 
   trueDrone.position.set(tx, ty, tz);
   errLineGeo.attributes.position.needsUpdate = true;
-  uncSphere.scale.setScalar(Math.max(0.4, s.uncertainty));
+  // Sphere is centred on the active drone — scale it with that filter's covariance.
+  const unc = knActive ? (s.kn_uncertainty ?? s.uncertainty) : s.uncertainty;
+  uncSphere.scale.setScalar(Math.max(0.4, unc));
 
   // Flash + legend update on mode change
   if (knActive !== prevKNTrained) {
@@ -405,6 +467,43 @@ function applyState(s) {
     btn.classList.toggle('playing', !simPaused);
   }
 
+  // ── 10× calibration-flight chip ───────────────────────────────────────────────
+  const collecting = !!(s.training && s.training.active && s.training.step === 'collecting');
+  document.getElementById('calib-chip').classList.toggle('visible', collecting);
+
+  // ── Position-error chart ──────────────────────────────────────────────────────
+  // Clear the chart when a training run begins (false→true transition).
+  const trainingActive = !!(s.training && s.training.active);
+  if (trainingActive && !prevTrainingActive) clearErrChart();
+  prevTrainingActive = trainingActive;
+
+  // Only sample when the sim actually advanced. When paused, the SSE stream
+  // replays the same frame at 20 Hz — pushing it would scroll the chart with a
+  // constant value even though nothing changed.
+  const stepped = (typeof s.t === 'number') && (s.t !== lastErrT);
+  if (stepped) {
+    lastErrT = s.t;
+    if (typeof s.error === 'number') {
+      errBufKF.push(s.error);
+      if (errBufKF.length > ERR_MAX_SAMPLES) errBufKF.shift();
+    }
+    if (s.kn_trained && typeof s.kn_error === 'number') {
+      errBufKN.push(s.kn_error);
+      if (errBufKN.length > ERR_MAX_SAMPLES) errBufKN.shift();
+    }
+  }
+
+  const kfValEl = document.getElementById('err-val-kf');
+  const knValEl = document.getElementById('err-val-kn');
+  if (typeof s.error === 'number') kfValEl.textContent = 'KF ' + s.error.toFixed(2) + ' m';
+  if (s.kn_trained) {
+    knValEl.style.display = '';
+    if (typeof s.kn_error === 'number') knValEl.textContent = 'KN ' + s.kn_error.toFixed(2) + ' m';
+  } else {
+    knValEl.style.display = 'none';
+  }
+  drawErrChart();
+
 }
 
 // ── KalmanNET panel ───────────────────────────────────────────────────────────
@@ -422,7 +521,14 @@ const KN_PHASES = [
   'RETURN TO CALM',
 ];
 
+let _phaseListKey = null;
+
 function renderPhaseList(phaseIdx, step) {
+  // Skip the DOM rebuild when nothing changed — this runs on every SSE frame.
+  const key = phaseIdx + '|' + step;
+  if (key === _phaseListKey) return;
+  _phaseListKey = key;
+
   const el = document.getElementById('kn-phase-list');
   const optimising = step === 'training';
   el.innerHTML = KN_PHASES.map((name, i) => {
@@ -462,6 +568,7 @@ function updateKNPanel(s) {
   const info     = document.getElementById('kn-training-info');
   const btn      = document.getElementById('btn-train');
   const clearBtn = document.getElementById('btn-clear');
+  const viewBtn  = document.getElementById('btn-kn-view');
   const rhat     = document.getElementById('kn-rhat');
   const t        = s.training || {};
 
@@ -474,6 +581,7 @@ function updateKNPanel(s) {
     renderPhaseList(t.phase_idx ?? 0, t.step);
     btn.style.display      = 'none';
     clearBtn.style.display = 'none';
+    viewBtn.style.display  = 'none';
     rhat.style.display = 'none';
     if (t.wind !== undefined) {
       document.getElementById('env-wind-speed').value = t.wind;
@@ -491,14 +599,18 @@ function updateKNPanel(s) {
     clearBtn.style.display = '';
     clearBtn.disabled      = false;
     btn.style.display      = 'none';
+    viewBtn.style.display  = '';
+    viewBtn.disabled       = false;
+    updateKNViewButton();
     rhat.style.display = '';
-    renderKratio(s.kn_k_ratio || {});
+    renderKratio(s.kn_k_ratio || {}, s.failed || {});
   } else {
     setTrainingLock(false);
     dot.className   = 'kn-status-dot';
     label.textContent = 'UNTRAINED';
     info.style.display = 'none';
     clearBtn.style.display = 'none';
+    viewBtn.style.display  = 'none';
     btn.style.display      = '';
     btn.disabled           = false;
     btn.innerHTML = '&#9654; &nbsp;TRAIN KALMAN-NET';
@@ -506,15 +618,26 @@ function updateKNPanel(s) {
   }
 }
 
-function renderKratio(kratio) {
+let _kratioFrame = 0;
+
+function renderKratio(kratio, failed) {
+  // The ratios drift slowly — rebuild the grid at most every 5th frame to cut
+  // 20 Hz innerHTML churn.
+  if (_kratioFrame++ % 5 !== 0) return;
   const grid = document.getElementById('kn-rhat-grid');
   const rows = [
-    ['GPS',  kratio.gps],
-    ['IMU',  kratio.imu],
-    ['BARO', kratio.baro],
-    ['MAG',  kratio.mag],
+    ['GPS',  'gps',  kratio.gps],
+    ['IMU',  'imu',  kratio.imu],
+    ['BARO', 'baro', kratio.baro],
+    ['MAG',  'mag',  kratio.mag],
   ];
-  grid.innerHTML = rows.map(([name, vals]) => {
+  grid.innerHTML = rows.map(([name, key, vals]) => {
+    if (failed[key]) {
+      // A failed sensor produces no innovation — show OFFLINE, not a stale ratio.
+      return `<span class="rhat-name">${name}</span>` +
+             `<span class="rhat-val offline">OFFLINE</span>` +
+             `<span class="rhat-ratio offline">—</span>`;
+    }
     if (!vals || !vals.length) return '';
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
     const dev  = Math.abs(mean - 1.0);
@@ -526,6 +649,19 @@ function renderKratio(kratio) {
            `<span class="rhat-ratio ${cls}">${dir}×${mean.toFixed(1)}</span>`;
   }).join('');
 }
+
+function updateKNViewButton() {
+  const btn = document.getElementById('btn-kn-view');
+  if (btn) btn.textContent = knViewEnabled ? 'VIEW: KALMAN-NET' : 'VIEW: STANDARD KF';
+}
+
+function toggleKNView() {
+  knViewEnabled = !knViewEnabled;
+  updateKNViewButton();
+  // Re-apply immediately so the drone/legend/error-line follow even while paused.
+  if (latestState) applyState(latestState);
+}
+window.toggleKNView = toggleKNView;
 
 async function clearModel() {
   await fetch('/clear-model', { method: 'POST' });
@@ -555,22 +691,36 @@ function onEnvChange() {
   document.getElementById('env-temp-val').textContent =
     temp + '°C' + (dT !== 0 ? ' (' + (dT > 0 ? '+' : '') + dT + ')' : '');
 
-  fetch('/environment', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      wind_speed:   speed,
-      wind_heading: heading * Math.PI / 180,
-      temperature:  temp,
-    }),
-  });
+  // Debounce the POST — dragging a slider fires many input events; only send the
+  // last value after 150 ms of quiet. Labels above update immediately.
+  clearTimeout(envDebounce);
+  envDebounce = setTimeout(() => {
+    fetch('/environment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        wind_speed:   speed,
+        wind_heading: heading * Math.PI / 180,
+        temperature:  temp,
+      }),
+    });
+  }, 150);
 }
+let envDebounce;
 
 // ── SSE connection ────────────────────────────────────────────────────────────
+function setConnBadge(visible) {
+  const el = document.getElementById('badge-conn');
+  if (el) el.style.display = visible ? '' : 'none';
+}
+
 function connectSSE() {
   const es = new EventSource('/stream');
-  es.onmessage = e => { try { applyState(JSON.parse(e.data)); } catch (_) {} };
-  es.onerror   = () => { es.close(); setTimeout(connectSSE, 2000); };
+  es.onmessage = e => {
+    setConnBadge(false);   // first frame after (re)connect clears the warning
+    try { applyState(JSON.parse(e.data)); } catch (_) {}
+  };
+  es.onerror   = () => { setConnBadge(true); es.close(); setTimeout(connectSSE, 2000); };
 }
 connectSSE();
 
@@ -611,6 +761,7 @@ async function resetSim() {
   estTrail.geometry.setDrawRange(0, 0);
   rawTrail.geometry.setDrawRange(0, 0);
   knTrail.geometry.setDrawRange(0, 0);
+  clearErrChart();
   camera.position.set(60, 38, 60);
   controls.target.set(0, 8, 0);
   controls.update();
@@ -632,15 +783,110 @@ function positionTooltip(e) {
 }
 
 // Tooltip content lives in tooltips.js — applied before this script runs.
+const touchPrimary = window.matchMedia('(pointer: coarse)').matches;
+let tooltipPinned = false;
+
+function showTooltip(el, e) {
+  tooltipEl.innerHTML = el.dataset.tooltip;   // innerHTML: our own controlled content
+  tooltipEl.classList.add('visible');
+  positionTooltip(e);
+}
+function hideTooltip() {
+  tooltipEl.classList.remove('visible');
+  tooltipPinned = false;
+}
+
 document.querySelectorAll('[data-tooltip]').forEach(el => {
-  el.addEventListener('mouseenter', e => {
-    tooltipEl.innerHTML = el.dataset.tooltip;   // innerHTML: our own controlled content
-    tooltipEl.classList.add('visible');
-    positionTooltip(e);
-  });
-  el.addEventListener('mousemove', positionTooltip);
-  el.addEventListener('mouseleave', () => tooltipEl.classList.remove('visible'));
+  el.addEventListener('mouseenter', e => { if (!tooltipPinned) showTooltip(el, e); });
+  el.addEventListener('mousemove', e => { if (!tooltipPinned) positionTooltip(e); });
+  el.addEventListener('mouseleave', () => { if (!tooltipPinned) tooltipEl.classList.remove('visible'); });
+
+  // Touch-primary devices have no hover — tap to pin the tooltip.
+  if (touchPrimary) {
+    el.addEventListener('click', e => {
+      e.stopPropagation();   // don't let the document listener immediately dismiss it
+      showTooltip(el, e);
+      tooltipPinned = true;
+    });
+  }
 });
+
+if (touchPrimary) {
+  // Tap anywhere else (or Escape) dismisses a pinned tooltip.
+  document.addEventListener('click', () => { if (tooltipPinned) hideTooltip(); });
+  document.addEventListener('keydown', e => { if (e.code === 'Escape' && tooltipPinned) hideTooltip(); });
+}
+
+// ── Guided tour ─────────────────────────────────────────────────────────────────
+// A dismissible onboarding wizard. Each step points at a real UI element; the
+// card sits at a screen edge and never blocks interaction — the user drives the
+// actual controls. Shown on first visit; re-openable via the header TOUR button.
+const TOUR_STEPS = [
+  { sel: '#btn-play-pause', title: 'This is a sensor-fusion demo',
+    body: 'A drone flies a helix while noisy sensors (GPS, IMU, barometer, magnetometer) are fused into one position estimate. Press <b>PLAY</b> (or Space) to start it moving.' },
+  { sel: '.bottom-legend', title: 'Meet the drones',
+    body: 'The <b style="color:#00ff44">green</b> wireframe is the true position. The <b style="color:#fff">white</b> drone is the Kalman filter\'s estimate. The gap between them is the position error.' },
+  { sel: '.env-overlay', title: 'Break the environment',
+    body: 'Drag <b>Temperature</b> up to 50°C. The barometer develops a bias, and the white filter drone sinks below the green truth drone — the fixed-gain filter follows the faulty altimeter.' },
+  { sel: '#badge-kf', title: 'Why: fixed R',
+    body: 'The Kalman filter\'s trust in each sensor (its noise matrix <b>R</b>) is calibrated once, at calm conditions, and never changes. When the environment degrades a sensor, R is wrong — so the estimate drifts. Hover this badge for the full maths.' },
+  { sel: '#btn-train', title: 'Train Kalman-NET',
+    body: 'Click <b>TRAIN KALMAN-NET</b>. It flies a ~1-minute scripted calibration flight at 10× and trains a small GRU to predict the Kalman gain from the live innovations — learning to trust each sensor adaptively.' },
+  { sel: '#err-overlay', title: 'Compare',
+    body: 'Re-apply the same stress. The <b style="color:#00ccbb">cyan</b> Kalman-NET drone holds close to truth where the <b style="color:#00aaff">blue</b> filter drifts. Watch the <b>POSITION ERROR</b> chart — the gap between the two lines is the whole point of the demo.' },
+];
+let tourIdx = -1;
+
+function applyTourHighlight(sel) {
+  document.querySelectorAll('.tour-highlight').forEach(el => el.classList.remove('tour-highlight'));
+  const el = sel && document.querySelector(sel);
+  if (el) el.classList.add('tour-highlight');
+}
+
+function renderTourStep() {
+  const step = TOUR_STEPS[tourIdx];
+  if (!step) return;
+  document.getElementById('tour-step-count').textContent = `Step ${tourIdx + 1} of ${TOUR_STEPS.length}`;
+  document.getElementById('tour-title').textContent = step.title;
+  document.getElementById('tour-body').innerHTML = step.body;   // our own controlled content
+  document.getElementById('tour-back').disabled = tourIdx === 0;
+  document.getElementById('tour-next').textContent = tourIdx === TOUR_STEPS.length - 1 ? 'Done' : 'Next';
+  applyTourHighlight(step.sel);
+}
+
+function startTour() {
+  tourIdx = 0;
+  document.getElementById('tour-card').style.display = '';
+  renderTourStep();
+}
+window.startTour = startTour;
+
+function endTour() {
+  document.getElementById('tour-card').style.display = 'none';
+  applyTourHighlight(null);
+  tourIdx = -1;
+  try { localStorage.setItem('kalmannetTourDone', '1'); } catch (_) {}
+}
+window.endTour = endTour;
+
+function tourNext() {
+  if (tourIdx >= TOUR_STEPS.length - 1) { endTour(); return; }
+  tourIdx++;
+  renderTourStep();
+}
+window.tourNext = tourNext;
+
+function tourBack() {
+  if (tourIdx <= 0) return;
+  tourIdx--;
+  renderTourStep();
+}
+window.tourBack = tourBack;
+
+// Auto-show on first visit only.
+try {
+  if (!localStorage.getItem('kalmannetTourDone')) startTour();
+} catch (_) {}
 
 // ── Resize ────────────────────────────────────────────────────────────────────
 function onResize() {

@@ -116,7 +116,9 @@ class DroneSim:
             "baro": [0.5 + 0.008 * abs(dT)],
             "mag":  [3.0, 3.0],
         }
-        # Temperature-induced barometer bias: hot air = lower pressure = reads low
+        # Temperature-induced barometer bias: in warm air, pressure at a given
+        # altitude is higher than the standard-atmosphere model assumes, so the
+        # altimeter converts it to a lower indicated altitude — hot reads low.
         baro_bias = -dT * 0.25
 
         # ── Generate sensor readings ───────────────────────────────────────────
@@ -194,6 +196,7 @@ class DroneSim:
             "kn_trained":  self.kn.trained,
             "error":       float(np.linalg.norm(truth[:3] - np.array(est[:3]))),
             "uncertainty": self.kf.position_uncertainty(),
+            "kn_uncertainty": self.kn.position_uncertainty(),
             "active":      active,
             "env": {
                 "wind_speed":   round(self.wind_speed, 1),

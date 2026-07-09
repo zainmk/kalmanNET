@@ -34,12 +34,14 @@ K = P · Hᵀ · (H · P · Hᵀ + R)⁻¹
 
 Kalman-NET replaces the gain formula above with a **GRU** (Gated Recurrent Unit) neural network. Instead of computing K from a fixed R, the GRU predicts K directly by observing the history of recent **innovations** — the gap between what sensors measured and what the filter expected.
 
-**Why direct-K matters.** R-inflation (the alternative approach) can only push K *down* — it cannot trust a sensor more than the formula allows. But environments create both problems:
+**Why direct-K matters.** R-inflation (the alternative approach) can only push K *down* — it cannot trust a sensor more than the formula allows. Direct-K can move the gain either way:
 
 | Scenario | What the filter needs | R-inflation | Direct-K |
 |---|---|---|---|
-| Wind displaces the drone | Trust GPS *more* to follow it | ✗ | ✓ |
-| Temperature biases the barometer | Trust baro *less* to ignore it | ✓ | ✓ |
+| Sparse/lagging GPS, drone displaced | Trust GPS *more* to follow it | ✗ | ✓ |
+| A sensor develops a systematic bias | Trust that sensor *less* to ignore it | ✓ | ✓ |
+
+That is the *capability* difference. Whether it actually pays off depends on the failure mode — and only the second row materialises in this simulation. Because GPS here reports position every step, the filter already follows the wind-displaced trajectory without extra gain, so wind reduces to a *noise* problem the classical filter handles well; the barometer *bias* is where the learned gain earns its keep. See [When to use which: bias vs noise](#when-to-use-which-bias-vs-noise) for the full argument.
 
 **How the GRU works.** All four sensors' innovations are combined into a single 9-dimensional vector each step. The GRU processes this and outputs a K matrix for each sensor — the shared network can exploit cross-sensor patterns (e.g. GPS and IMU both showing large innovations simultaneously signals wind, not just individual sensor noise).
 
@@ -47,10 +49,50 @@ Kalman-NET replaces the gain formula above with a **GRU** (Gated Recurrent Unit)
 
 ---
 
+## Results
+
+Position RMSE over a 60-second flight in each scenario, standard Kalman filter vs Kalman-NET:
+
+| Scenario | KF RMSE (m) | KN RMSE (m) | Improvement |
+|---|---|---|---|
+| calm | 0.360 | 1.059 | -194.6% |
+| wind | 0.506 | 1.530 | -202.1% |
+| heat | 7.097 | 1.463 | +79.4% |
+| combined | 4.736 | 1.552 | +67.2% |
+
+*Numbers from `benchmark.py` with a fixed seed (`np.random.seed(42)`) on a locally trained model — retraining changes them slightly. Run `python benchmark.py` to reproduce (requires a trained `kalmannet_model.pt`).*
+
+The story is the tradeoff, not a uniform win. **Kalman-NET dominates exactly where the fixed-R Kalman filter breaks down**: under temperature-induced barometer bias (`heat`, `combined`) it cuts position error by 67–79%, because it learns to *reduce* trust in the biased altimeter — something a fixed R cannot do. But in the easy regimes (`calm`, mild `wind`) the filter is already near-optimal at sub-metre accuracy, and the teacher-forced network carries a ~1 m error floor it does not beat there (see [*Training is teacher-forced, unlike the paper*](#training-is-teacher-forced-unlike-the-paper) below). The honest summary: this Kalman-NET trades a little accuracy in calm conditions for large robustness gains under the environmental stress it was designed for.
+
+---
+
+## When to use which: bias vs noise
+
+The results above look inconsistent — Kalman-NET wins big under heat but *loses* under wind — until you see the pattern. It is not wind versus temperature. It is **bias versus noise**, and it is the single most important idea this simulation teaches.
+
+The standard Kalman filter is **provably optimal** — the minimum-variance estimator — under one condition: every sensor's error is zero-mean noise with a known, constant covariance. That assumption is exactly what its fixed `R` encodes. Kalman-NET can only beat the filter where that assumption breaks, and environments break it in two fundamentally different ways.
+
+**Noise (zero-mean, wrong level) — the Kalman filter wins.**
+Wind raises GPS and IMU noise above their calibrated values (GPS σ = 2 + 0.12·w m). `R` is now too small and the filter slightly over-trusts those sensors — but the error is still *zero-mean*: average enough noisy readings and the truth emerges. A wrong `R` only costs a little, because against zero-mean noise the classical filter is already near-optimal by construction. And since GPS reports absolute position every step, the filter simply follows it — the constant-velocity model never has to extrapolate far, so it tracks the wind-displaced trajectory without trouble. A learned gain has almost nothing to add here, and its denser, less-stable K tends to chase the noise rather than smooth it. This is why Kalman-NET is *worse* under wind: there is no structural failure to fix, only optimal behaviour to imitate imperfectly.
+
+**Bias (non-zero mean) — Kalman-NET wins.**
+Temperature gives the barometer a persistent altitude offset (−0.25·ΔT m — about −7.5 m at 50 °C). This is *not* noise: no amount of averaging removes it, because the average itself is wrong. A fixed `R` models spread, not offset, so the filter literally cannot tell a systematic lean from random scatter — it trusts the biased reading at full weight and follows it down. Kalman-NET sees the sustained, one-directional innovations that only a bias produces, and *reduces* the barometer's gain, re-anchoring altitude on the still-clean GPS. No fixed noise model can do this at any calibration, which is why the win is large and durable.
+
+So the rule of thumb:
+
+> **The Kalman filter is the right tool against noise. Kalman-NET earns its place against bias** — systematic, structured error that a fixed noise model is blind to by construction.
+
+This also explains the `calm` row, where Kalman-NET is *worse*: with no bias and correctly-calibrated noise, the classical filter is already optimal and the network can only add variance. The lesson is not "the neural filter is better" — it is **knowing when the simple, provably-optimal estimator already suffices, and reaching for the learned one only when a real, structured failure appears.** More model complexity is not automatically more accuracy.
+
+*(A corollary worth stating: to make the wind scenario favour Kalman-NET, the honest fix is in the physics, not the network — wind would have to* bias *a sensor, e.g. GPS multipath, that a second clean sensor can cross-check, mirroring the barometer case. This simulation deliberately does not fake that, so wind stays a noise problem the classical filter rightfully wins.)*
+
+---
+
 ## Running
 
 ```bash
-pip install flask numpy torch --index-url https://download.pytorch.org/whl/cpu
+pip install flask numpy
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 python app.py
 ```
 
@@ -63,6 +105,25 @@ Open `http://localhost:5000`. Press **▶ PLAY** or `Space` to start. Press `R` 
 2. Raise temperature to 50°C — watch the KF altitude drift as the barometer introduces a −7.5 m bias
 3. Raise wind to 15–20 m/s — watch the KF struggle to follow the wind-displaced trajectory
 4. Reset, train Kalman-NET, repeat — observe the cyan drone tracking closer to truth under the same stress
+
+---
+
+## Deployment
+
+### Docker (self-hosting / NAS)
+
+```bash
+docker compose up --build
+# http://localhost:5000
+```
+
+The container runs `gunicorn app:app -w 1 --threads 8 -t 300`. **The single worker is a hard requirement** — simulation state lives in process globals, so multiple workers would each run an independent simulation. Threads (not workers) serve the concurrent SSE streams.
+
+### Render (or similar PaaS)
+
+Works on the free tier. Python is pinned to 3.11 (`runtime.txt`, `.python-version`) because the CPU torch wheel in `requirements.txt` is cp311. If the dashboard start command overrides `render.yaml`, set it manually to `gunicorn app:app -w 1 --threads 8 -t 300 -b 0.0.0.0:$PORT`. Free instances spin down when idle — the first visit after idle takes ~30 s and the UI shows RECONNECTING… until the stream resumes.
+
+> **Note:** all visitors to one deployment share a single simulation — pausing, training, or changing the environment affects everyone connected. This is a demo design tradeoff, not an oversight (see `UPGRADE_PLAN.md` §5.3 for the planned client-side inference that removes it).
 
 ---
 
@@ -98,6 +159,16 @@ This simulation models sensor noise as additive Gaussian with analytically defin
 | Magnetometer interference | Not modelled | Correlated with motor RPM, varies with airframe flex and nearby ferrous material |
 
 Domain randomisation — training with widely varied noise parameters rather than a single fixed formula — is the standard mitigation, producing a network robust to distributional mismatch rather than one calibrated to the simulation's exact noise model.
+
+### Training is teacher-forced, unlike the paper
+
+For speed, training computes innovations against truth-anchored predictions
+(`x_pred = F·x_true`), so the GRU never sees the innovation distribution produced by
+its own imperfect estimates — a train/inference distribution shift. The original
+KalmanNet paper instead backpropagates through the filter recursion itself (BPTT),
+which is slower but exposes the network to its own errors. In practice the clipped
+gain keeps inference stable here, but the teacher-forced network is optimistic; a
+production implementation should train through the recursion.
 
 ### Barometer bias detection is transient
 

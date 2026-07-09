@@ -1,4 +1,5 @@
 flask>=2.3
 numpy>=1.24
 gunicorn>=21.0
-https://download.pytorch.org/whl/cpu/torch-2.5.1%2Bcpu-cp311-cp311-linux_x86_64.whl
+# deployment pin (Render/Docker, linux/py3.11) — on dev machines install torch separately, see README
+torch @ https://download.pytorch.org/whl/cpu/torch-2.5.1%2Bcpu-cp311-cp311-linux_x86_64.whl ; sys_platform == "linux" and python_version == "3.11"

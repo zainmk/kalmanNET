@@ -49,14 +49,27 @@ def _sim_loop() -> None:
         with _paused_lock:
             paused = _paused
         if not paused:
-            with sim_lock:
-                state = sim.step()
-            with _state_lock:
-                _state.clear()
-                _state.update(state)
+            try:
+                with sim_lock:
+                    state = sim.step()
+                with _state_lock:
+                    _state.clear()
+                    _state.update(state)
+            except Exception:
+                # Never let the daemon thread die — surface and keep the loop alive.
+                import traceback
+                traceback.print_exc()
+                time.sleep(1.0)   # avoid a tight error spin
+                continue
         with _training_fast_lock:
             fast = _training_fast
         time.sleep(0.005 if fast else 0.05)  # 200 Hz during training, 20 Hz normally
+
+
+# Prime _state with one step so the SSE stream has a frame to send before the
+# first PLAY — otherwise every panel shows "—" until the sim is unpaused.
+with sim_lock:
+    _state.update(sim.step())
 
 
 threading.Thread(target=_sim_loop, daemon=True).start()
@@ -66,100 +79,114 @@ def _run_training() -> None:
     """Background thread: scripted env sequence → data collection → MLP training."""
     global _paused
 
+    global _training_fast
+
     # Unblock sim and enable fast mode for data collection
     with _paused_lock:
         was_paused = _paused
         _paused = False
     with _training_fast_lock:
-        global _training_fast
         _training_fast = True
 
-    # Reset sim to a clean state
-    with sim_lock:
-        sim.reset()
-        sim.training_buffer.clear()
-        sim.collecting_data = True
+    # Everything below is wrapped so that if any step raises (sim.reset,
+    # json.dump, sim.kn._load, ...) the UI still unlocks. The finally block
+    # is idempotent — safe to run after the happy path already did these things.
+    try:
+        # Reset sim to a clean state
+        with sim_lock:
+            sim.reset()
+            sim.training_buffer.clear()
+            sim.collecting_data = True
 
-    n = len(_TRAIN_PHASES)
-    for i, (phase, wind, temp, dur) in enumerate(_TRAIN_PHASES):
+        n = len(_TRAIN_PHASES)
+        for i, (phase, wind, temp, dur) in enumerate(_TRAIN_PHASES):
+            with _training_lock:
+                _training_state.update({
+                    "active":    True,
+                    "phase":     phase,
+                    "phase_idx": i,
+                    "progress":  round(i / n, 3),
+                    "step":      "collecting",
+                    "wind":      wind,
+                    "temp":      temp,
+                })
+            with sim_lock:
+                sim.set_environment(wind_speed=float(wind),
+                                    wind_heading=0.0,
+                                    temperature=float(temp))
+            time.sleep(dur)
+
+        # Stop collecting and return sim to normal speed
+        with _training_fast_lock:
+            _training_fast = False
+        with sim_lock:
+            sim.collecting_data = False
+            buf = list(sim.training_buffer)
+
         with _training_lock:
             _training_state.update({
-                "active":    True,
-                "phase":     phase,
-                "phase_idx": i,
-                "progress":  round(i / n, 3),
-                "step":      "collecting",
-                "wind":      wind,
-                "temp":      temp,
+                "phase":    "OPTIMISING NETWORK",
+                "progress": 0.90,
+                "step":     "training",
+                "wind":     0,
+                "temp":     20,
             })
+
+        # Save buffer so the standalone script can also re-use it locally
+        buf_path = Path(__file__).parent / "training_buffer.json"
+        with open(buf_path, "w") as f:
+            json.dump(buf, f)
+
+        # Train in-process: single PyTorch instance, real-time progress updates
+        def _progress_cb(epoch, epochs, rms):
+            frac = 0.90 + 0.09 * (epoch / epochs)   # 0.90 -> 0.99 across epochs
+            with _training_lock:
+                _training_state["progress"] = round(frac, 3)
+
+        try:
+            ok = train_from_buffer(buf, progress_cb=_progress_cb)
+        except Exception as exc:
+            print(f"[training] GRU training failed: {exc}")
+            ok = False
+
+        if ok:
+            with sim_lock:
+                sim.kn._load()
+        else:
+            print("[training] GRU training did not complete successfully.")
+
+        # Pause immediately so the sim loop stops while we reset
+        with _paused_lock:
+            _paused = True
+
+        # Reset drone to initial position (trained KN is preserved by _init_filters)
         with sim_lock:
-            sim.set_environment(wind_speed=float(wind),
-                                wind_heading=0.0,
-                                temperature=float(temp))
-        time.sleep(dur)
+            sim.set_environment(wind_speed=0.0, wind_heading=0.0, temperature=20.0)
+            sim.reset()
+            state = sim.step()  # one step so SSE has a valid state to send
 
-    # Stop collecting and return sim to normal speed
-    with _training_fast_lock:
-        _training_fast = False
-    with sim_lock:
-        sim.collecting_data = False
-        buf = list(sim.training_buffer)
+        with _state_lock:
+            _state.clear()
+            _state.update(state)
 
-    with _training_lock:
-        _training_state.update({
-            "phase":    "OPTIMISING NETWORK",
-            "progress": 0.90,
-            "step":     "training",
-            "wind":     0,
-            "temp":     20,
-        })
-
-    # Save buffer so the standalone script can also re-use it locally
-    buf_path = Path(__file__).parent / "training_buffer.json"
-    with open(buf_path, "w") as f:
-        json.dump(buf, f)
-
-    # Train in-process: single PyTorch instance, real-time progress updates
-    def _progress_cb(epoch, epochs, rms):
-        frac = 0.90 + 0.09 * (epoch / epochs)   # 0.90 -> 0.99 across epochs
         with _training_lock:
-            _training_state["progress"] = round(frac, 3)
-
-    try:
-        ok = train_from_buffer(buf, progress_cb=_progress_cb)
-    except Exception as exc:
-        print(f"[training] GRU training failed: {exc}")
-        ok = False
-
-    if ok:
+            _training_state.update({
+                "active":   False,
+                "phase":    None,
+                "progress": 1.0,
+                "step":     "done",
+                "wind":     0,
+                "temp":     20,
+            })
+    finally:
+        # Safety net: guarantee the UI unlocks even if the body raised.
+        # Each clause under its own lock (never nested), idempotent.
+        with _training_fast_lock:
+            _training_fast = False
         with sim_lock:
-            sim.kn._load()
-    else:
-        print("[training] GRU training did not complete successfully.")
-
-    # Pause immediately so the sim loop stops while we reset
-    with _paused_lock:
-        _paused = True
-
-    # Reset drone to initial position (trained KN is preserved by _init_filters)
-    with sim_lock:
-        sim.set_environment(wind_speed=0.0, wind_heading=0.0, temperature=20.0)
-        sim.reset()
-        state = sim.step()  # one step so SSE has a valid state to send
-
-    with _state_lock:
-        _state.clear()
-        _state.update(state)
-
-    with _training_lock:
-        _training_state.update({
-            "active":   False,
-            "phase":    None,
-            "progress": 1.0,
-            "step":     "done",
-            "wind":     0,
-            "temp":     20,
-        })
+            sim.collecting_data = False
+        with _training_lock:
+            _training_state.update({"active": False, "phase": None, "step": "done"})
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -219,8 +246,10 @@ def environment():
 def reset_sim():
     with sim_lock:
         sim.reset()
+        state = sim.step()   # one step so SSE has a fresh frame even while paused
     with _state_lock:
         _state.clear()
+        _state.update(state)
     return jsonify({"ok": True})
 
 
@@ -255,6 +284,16 @@ def train():
     with _training_lock:
         if _training_state.get("active"):
             return jsonify({"ok": False, "reason": "already training"})
+        # Claim the training slot atomically before spawning the thread, so a
+        # rapid second POST sees active=True and is refused. _run_training then
+        # overwrites these fields as it progresses, and its finally clears active.
+        _training_state.update({
+            "active":    True,
+            "phase":     "STARTING",
+            "phase_idx": 0,
+            "progress":  0.0,
+            "step":      "starting",
+        })
     threading.Thread(target=_run_training, daemon=True).start()
     return jsonify({"ok": True})
 
