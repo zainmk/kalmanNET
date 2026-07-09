@@ -110,6 +110,28 @@ Open `http://localhost:5000`. Press **▶ PLAY** or `Space` to start. Press `R` 
 
 ## Deployment
 
+### Browser build (no server — static hosting)
+
+`web/` is a full client-side port: the simulation, the classical Kalman filter, and the
+Kalman-NET GRU (~18k parameters, 75 KB) run in plain JavaScript in the visitor's tab —
+no Flask, no PyTorch, no backend at all. Each visitor gets an independent simulation.
+
+```bash
+python -m http.server          # from the repo root
+# open http://localhost:8000/web/
+```
+
+Deploy the repo to any static host (Vercel, GitHub Pages, Cloudflare Pages);
+`vercel.json` redirects `/` to `/web/`. The TRAIN button flies the same calibration
+flight and collects a real data buffer, then loads weights pretrained offline with the
+repo's PyTorch trainer (the browser build ships inference only — the UI says so).
+The JS filter math is held to the Python implementation by parity tests:
+
+```bash
+python export_web_weights.py   # regenerate web/weights.json + reference vectors
+node web/test/parity.mjs       # KF ≈ numpy to 1e-15, GRU ≈ torch to 1e-7
+```
+
 ### Docker (self-hosting / NAS)
 
 ```bash
@@ -119,11 +141,7 @@ docker compose up --build
 
 The container runs `gunicorn app:app -w 1 --threads 8 -t 300`. **The single worker is a hard requirement** — simulation state lives in process globals, so multiple workers would each run an independent simulation. Threads (not workers) serve the concurrent SSE streams.
 
-### Render (or similar PaaS)
-
-Works on the free tier. Python is pinned to 3.11 (`runtime.txt`, `.python-version`) because the CPU torch wheel in `requirements.txt` is cp311. If the dashboard start command overrides `render.yaml`, set it manually to `gunicorn app:app -w 1 --threads 8 -t 300 -b 0.0.0.0:$PORT`. Free instances spin down when idle — the first visit after idle takes ~30 s and the UI shows RECONNECTING… until the stream resumes.
-
-> **Note:** all visitors to one deployment share a single simulation — pausing, training, or changing the environment affects everyone connected. This is a demo design tradeoff, not an oversight (see `UPGRADE_PLAN.md` §5.3 for the planned client-side inference that removes it).
+> **Note:** all visitors to one *server* deployment share a single simulation — pausing, training, or changing the environment affects everyone connected. This is a demo design tradeoff, not an oversight. The browser build above removes it entirely: every tab is its own simulation.
 
 ---
 

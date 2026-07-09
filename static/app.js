@@ -530,7 +530,7 @@ function renderPhaseList(phaseIdx, step) {
   _phaseListKey = key;
 
   const el = document.getElementById('kn-phase-list');
-  const optimising = step === 'training';
+  const optimising = step === 'training' || step === 'loading';
   el.innerHTML = KN_PHASES.map((name, i) => {
     let cls, icon;
     if (optimising || i < phaseIdx) {
@@ -543,7 +543,8 @@ function renderPhaseList(phaseIdx, step) {
     return `<div class="kn-pl-row ${cls}"><span class="kn-pl-icon">${icon}</span><span>${name.trim()}</span></div>`;
   }).join('');
   if (optimising) {
-    el.innerHTML += `<div class="kn-pl-row kn-pl-active"><span class="kn-pl-icon">▶</span><span>OPTIMISING NETWORK</span></div>`;
+    const rowText = step === 'loading' ? 'LOADING PRETRAINED WEIGHTS' : 'OPTIMISING NETWORK';
+    el.innerHTML += `<div class="kn-pl-row kn-pl-active"><span class="kn-pl-icon">▶</span><span>${rowText}</span></div>`;
   }
 }
 
@@ -575,7 +576,11 @@ function updateKNPanel(s) {
   if (t.active) {
     setTrainingLock(true);
     dot.className   = 'kn-status-dot training';
-    label.textContent = t.step === 'training' ? 'OPTIMISING' : 'COLLECTING DATA';
+    // 'loading' is sent only by the browser build (web/), which loads
+    // pretrained weights instead of optimising — the Flask backend never sends it.
+    label.textContent = t.step === 'training' ? 'OPTIMISING'
+                      : t.step === 'loading'  ? 'LOADING WEIGHTS'
+                      : 'COLLECTING DATA';
     info.style.display = '';
     document.getElementById('kn-bar-fill').style.width = ((t.progress || 0) * 100).toFixed(1) + '%';
     renderPhaseList(t.phase_idx ?? 0, t.step);
