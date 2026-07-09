@@ -2,9 +2,12 @@
 .git
 __pycache__
 *.pyc
-demo.mp4
 training_buffer.json
 kalmannet_model.pt
+web
+vercel.json
+export_web_weights.py
 CLAUDE.md
 CLAUDE_CHAT_LOG.md
 UPGRADE_PLAN.md
+BROWSER_PORT_PLAN.md

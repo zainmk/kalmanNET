@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Kalman-NET — in-browser</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛰️</text></svg>">
+  <link rel="stylesheet" href="../static/style.css">
+</head>
+<body>
+
+<header>
+  <h1> kalman-net // Algorithmic Sensor Resiliency </h1>
+  <span class="badge" id="badge-local" data-tooltip="">100% IN-BROWSER</span>
+  <span class="badge" id="badge-helix" data-tooltip="">HELIX TRAJECTORY </span>
+  <a class="badge" id="badge-kf" data-tooltip="" href="https://en.wikipedia.org/wiki/Kalman_filter" target="_blank" rel="noopener noreferrer">LINEAR KALMAN-FILTER</a>
+  <a class="badge" id="badge-kn" data-tooltip="" href="https://pure.tue.nl/ws/files/201346390/KalmanNet_Neural_Network_Aided_Kalman_Filtering_for_Partially_Known_Dynamics.pdf" target="_blank" rel="noopener noreferrer">KALMAN-NET</a>
+  <button class="play-pause-btn" id="btn-play-pause" onclick="togglePause()">&#9654; &nbsp;PLAY</button>
+  <button class="reset-header-btn" id="btn-reset-header" onclick="resetSim()">↺ &nbsp;RESET</button>
+  <button class="tour-btn" id="btn-tour" onclick="startTour()">?&nbsp; TOUR</button>
+  <span id="badge-conn" style="display:none">RECONNECTING…</span>
+  <span id="badge-status" data-tooltip="">ALL SENSORS NOMINAL</span>
+</header>
+
+<div class="main">
+  <canvas id="canvas"></canvas>
+  <div id="drone-mode-flash" class="drone-mode-flash kf"></div>
+  <div id="calib-chip" class="calib-chip">⏩ 10× CALIBRATION FLIGHT</div>
+
+  <!-- Environment overlay -->
+  <div class="env-overlay">
+    <div class="env-header">
+      <span class="panel-title" id="env-title" data-tooltip="">Environment</span>
+      <button class="env-reset-btn" id="env-reset-btn" onclick="resetEnv()" data-tooltip="">↺</button>
+    </div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" id="env-wind-speed-label" data-tooltip="">Wind Speed</span>
+        <span class="env-val" id="env-wind-speed-val">0 m/s</span>
+      </div>
+      <div class="slider-wrap">
+        <input type="range" id="env-wind-speed" min="0" max="20" step="0.5" value="0" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:calc(5.5px)" title="Default: 0 m/s"></div>
+      </div>
+    </div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" id="env-wind-heading-label" data-tooltip="">Wind Heading</span>
+        <span class="env-val" id="env-wind-heading-val">0°</span>
+      </div>
+      <div class="slider-wrap">
+        <input type="range" id="env-wind-heading" min="0" max="355" step="5" value="0" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:calc(5.5px)" title="Default: 0°"></div>
+      </div>
+    </div>
+
+    <div class="env-row">
+      <div class="env-label-row">
+        <span class="env-label" id="env-temp-label" data-tooltip="">Temperature</span>
+        <span class="env-val" id="env-temp-val">20°C</span>
+      </div>
+      <div class="slider-wrap">
+        <input type="range" id="env-temp" min="-10" max="50" step="1" value="20" oninput="onEnvChange()">
+        <div class="slider-tick" style="left:50%" title="Default: 20°C"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+
+    <!-- Sensor toggles -->
+    <div class="panel">
+      <div class="panel-title" id="panel-sensor-control" data-tooltip="">Sensor Control</div>
+
+      <button class="sensor-btn active" id="btn-gps"  onclick="toggleSensor('gps')"  data-tooltip="">
+        <span><span class="sensor-name">GPS</span><span class="sensor-desc">pos [x,y,z] ±2 m</span></span>
+        <span class="indicator"></span>
+      </button>
+      <button class="sensor-btn active" id="btn-imu"  onclick="toggleSensor('imu')"  data-tooltip="">
+        <span><span class="sensor-name">IMU</span><span class="sensor-desc">vel [vx,vy,vz] ±0.5 m/s</span></span>
+        <span class="indicator"></span>
+      </button>
+      <button class="sensor-btn active" id="btn-baro" onclick="toggleSensor('baro')" data-tooltip="">
+        <span><span class="sensor-name">BARO</span><span class="sensor-desc">altitude [z] ±0.5 m</span></span>
+        <span class="indicator"></span>
+      </button>
+      <button class="sensor-btn active" id="btn-mag"  onclick="toggleSensor('mag')"  data-tooltip="">
+        <span><span class="sensor-name">MAG</span><span class="sensor-desc">horiz. pos [x,y] ±3 m</span></span>
+        <span class="indicator"></span>
+      </button>
+
+    </div>
+
+    <!-- Sensor readings -->
+    <div class="panel" id="panel-sensor-readings" data-tooltip="">
+      <div class="panel-title">Sensor Readings</div>
+
+      <div class="sr-block">
+        <div class="sr-title"><span class="sr-name">GPS</span><span class="sr-unit">position · m</span></div>
+        <div class="sr-grid">
+          <span class="sr-ax"></span><span class="sr-col-hdr">Raw</span><span class="sr-col-hdr kf">KF Est</span><span class="sr-col-hdr kn">KN Est</span>
+          <span class="sr-ax">X</span><span class="sr-raw" id="sr-gps-x-raw">—</span><span class="sr-kf" id="sr-gps-x-kf">—</span><span class="sr-kn" id="sr-gps-x-kn">—</span>
+          <span class="sr-ax">Y</span><span class="sr-raw" id="sr-gps-y-raw">—</span><span class="sr-kf" id="sr-gps-y-kf">—</span><span class="sr-kn" id="sr-gps-y-kn">—</span>
+          <span class="sr-ax">Z</span><span class="sr-raw" id="sr-gps-z-raw">—</span><span class="sr-kf" id="sr-gps-z-kf">—</span><span class="sr-kn" id="sr-gps-z-kn">—</span>
+        </div>
+      </div>
+
+      <div class="sr-block">
+        <div class="sr-title"><span class="sr-name">IMU</span><span class="sr-unit">velocity · m/s</span></div>
+        <div class="sr-grid">
+          <span class="sr-ax"></span><span class="sr-col-hdr">Raw</span><span class="sr-col-hdr kf">KF Est</span><span class="sr-col-hdr kn">KN Est</span>
+          <span class="sr-ax">VX</span><span class="sr-raw" id="sr-imu-vx-raw">—</span><span class="sr-kf" id="sr-imu-vx-kf">—</span><span class="sr-kn" id="sr-imu-vx-kn">—</span>
+          <span class="sr-ax">VY</span><span class="sr-raw" id="sr-imu-vy-raw">—</span><span class="sr-kf" id="sr-imu-vy-kf">—</span><span class="sr-kn" id="sr-imu-vy-kn">—</span>
+          <span class="sr-ax">VZ</span><span class="sr-raw" id="sr-imu-vz-raw">—</span><span class="sr-kf" id="sr-imu-vz-kf">—</span><span class="sr-kn" id="sr-imu-vz-kn">—</span>
+        </div>
+      </div>
+
+      <div class="sr-block">
+        <div class="sr-title"><span class="sr-name">BARO</span><span class="sr-unit">altitude · m</span></div>
+        <div class="sr-grid">
+          <span class="sr-ax"></span><span class="sr-col-hdr">Raw</span><span class="sr-col-hdr kf">KF Est</span><span class="sr-col-hdr kn">KN Est</span>
+          <span class="sr-ax">Z</span><span class="sr-raw" id="sr-baro-z-raw">—</span><span class="sr-kf" id="sr-baro-z-kf">—</span><span class="sr-kn" id="sr-baro-z-kn">—</span>
+        </div>
+      </div>
+
+      <div class="sr-block">
+        <div class="sr-title"><span class="sr-name">MAG</span><span class="sr-unit">horiz. pos · m</span></div>
+        <div class="sr-grid">
+          <span class="sr-ax"></span><span class="sr-col-hdr">Raw</span><span class="sr-col-hdr kf">KF Est</span><span class="sr-col-hdr kn">KN Est</span>
+          <span class="sr-ax">X</span><span class="sr-raw" id="sr-mag-x-raw">—</span><span class="sr-kf" id="sr-mag-x-kf">—</span><span class="sr-kn" id="sr-mag-x-kn">—</span>
+          <span class="sr-ax">Y</span><span class="sr-raw" id="sr-mag-y-raw">—</span><span class="sr-kf" id="sr-mag-y-kf">—</span><span class="sr-kn" id="sr-mag-y-kn">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Position-error chart -->
+    <div class="panel" id="err-overlay">
+      <div class="err-header">
+        <span class="panel-title" id="err-chart-title" data-tooltip="">Position Error</span>
+        <div class="err-readouts">
+          <span class="err-val err-kf" id="err-val-kf">KF —</span>
+          <span class="err-val err-kn" id="err-val-kn" style="display:none">KN —</span>
+        </div>
+      </div>
+      <canvas id="err-chart" width="324" height="96"></canvas>
+    </div>
+
+    <!-- Kalman-NET panel -->
+    <div class="panel" id="panel-kn">
+      <div class="panel-title" id="panel-kn-title" data-tooltip="">Kalman-NET</div>
+      <div class="kn-status-row">
+        <span class="kn-status-dot" id="kn-status-dot"></span>
+        <span class="kn-status-label" id="kn-status-label">UNTRAINED</span>
+      </div>
+      <div class="kn-training-info" id="kn-training-info" style="display:none">
+        <div class="kn-bar-wrap"><div class="kn-bar-fill" id="kn-bar-fill"></div></div>
+        <div class="kn-phase-list" id="kn-phase-list"></div>
+      </div>
+      <button class="kn-view-btn" id="btn-kn-view" onclick="toggleKNView()" data-tooltip="" style="display:none">VIEW: KALMAN-NET</button>
+      <button class="kn-clear-btn" id="btn-clear" onclick="clearModel()" data-tooltip="" style="display:none">&#10005; &nbsp;CLEAR MODEL</button>
+      <button class="kn-train-btn" id="btn-train" onclick="startTraining()" data-tooltip="">&#9654; &nbsp;TRAIN KALMAN-NET</button>
+      <div class="kn-rhat" id="kn-rhat" style="display:none">
+        <div class="kn-rhat-title" id="kn-rhat-title" data-tooltip="">K-GAIN RATIO &nbsp;<span class="kn-rhat-sub">(vs standard KF)</span></div>
+        <div class="kn-rhat-grid" id="kn-rhat-grid"></div>
+      </div>
+    </div>
+
+  </div><!-- sidebar -->
+
+  <!-- Legend — centered pill at bottom of canvas -->
+  <div class="bottom-legend">
+    <div class="bottom-legend-inner">
+      <div class="overlay-legend-row" id="legend-true"       data-tooltip=""><div class="leg-line" style="background:#00ff44"></div>True</div>
+      <div class="overlay-legend-row" id="legend-raw"        data-tooltip=""><div class="leg-line" style="background:#ff3300"></div>Raw</div>
+      <div class="overlay-legend-row" id="legend-kalman"     data-tooltip=""><div class="leg-line" style="background:#00aaff"></div>Kalman</div>
+      <div class="overlay-legend-row" id="legend-kn"         data-tooltip=""><div class="leg-line" style="background:#00ccbb"></div>Kalman-NET</div>
+      <div class="overlay-legend-row" id="legend-true-drone" data-tooltip=""><div class="leg-dot"  style="background:#00ff44"></div>True drone</div>
+      <div class="overlay-legend-row" id="legend-est-drone"  data-tooltip=""><div class="leg-dot"  style="background:#ffffff"></div>Est. drone</div>
+      <div class="overlay-legend-row" id="legend-kf-sil"    style="display:none"><div class="leg-dot" style="background:#1155cc;opacity:0.6"></div>KF silhouette</div>
+      <div class="overlay-legend-row" id="legend-gps"        data-tooltip=""><div class="leg-dot"  style="background:#ffdd00"></div>GPS</div>
+      <div class="overlay-legend-row" id="legend-imu"        data-tooltip=""><div class="leg-dot"  style="background:#ff8800"></div>IMU</div>
+      <div class="overlay-legend-row" id="legend-baro"       data-tooltip=""><div class="leg-dot"  style="background:#ff44aa"></div>Baro</div>
+      <div class="overlay-legend-row" id="legend-mag"        data-tooltip=""><div class="leg-dot"  style="background:#bb44ff"></div>Mag</div>
+      <div class="overlay-legend-row" id="legend-unc"        data-tooltip=""><div class="leg-dot"  style="background:#0055ff; opacity:0.5"></div>Unc.</div>
+    </div>
+  </div>
+
+  <!-- Guided tour card (pure JS/CSS; does not block the UI) -->
+  <div class="tour-card" id="tour-card" style="display:none">
+    <div class="tour-step-count" id="tour-step-count"></div>
+    <div class="tour-title" id="tour-title"></div>
+    <div class="tour-body" id="tour-body"></div>
+    <div class="tour-controls">
+      <button class="tour-skip" id="tour-skip" onclick="endTour()">Skip tour</button>
+      <div class="tour-nav">
+        <button class="tour-back" id="tour-back" onclick="tourBack()">Back</button>
+        <button class="tour-next" id="tour-next" onclick="tourNext()">Next</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- main -->
+
+<div id="tooltip"></div>
+
+<script src="../static/vendor/three.min.js"></script>
+<script src="../static/vendor/OrbitControls.js"></script>
+<script src="../static/tooltips.js"></script>
+<!-- Browser build: local sim engine + API shim, then the unmodified shared frontend -->
+<script src="js/mat.js"></script>
+<script src="js/kf.js"></script>
+<script src="js/kalmannet.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/shim.js"></script>
+<script src="../static/app.js"></script>
+</body>
+</html>
